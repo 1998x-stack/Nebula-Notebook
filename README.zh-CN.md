@@ -11,6 +11,7 @@
 | 模块 | 能力 |
 | --- | --- |
 | Notebook 编辑 | Cell 添加、修改、删除、排序、Markdown 与 Python 编辑 |
+| Notebook URL | `/notebook/<id>` 深链接，刷新与前进/后退可用 |
 | 执行 | Jupyter Kernel 与 WebSocket 输出，标准输出、错误、图表 |
 | GPU | 在服务端 Docker CUDA 镜像中完成实际 PyTorch 检测后开放选择 |
 | 用户权限 | 管理员、Notebook 所有者、编辑者、只读者 |

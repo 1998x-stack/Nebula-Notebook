@@ -38,7 +38,7 @@ Yes, within provisioned accounts: admins manage users; owners manage notebook sh
 
 ## How does notebook sharing work?
 
-Sharing targets an **existing active Nebula account by email**; create the account in Administration first. No invitation email is sent. Owners/admins choose viewer or editor, and the recipient logs in with that email to see the notebook. Viewers can read saved content; editors can edit and execute code in the notebook's workspace. Revoking the share removes access immediately; use an unguessable password and grant editor only to trusted collaborators.
+Sharing targets an **existing active Nebula account by email**; create the account in Administration first. No invitation email is sent. Owners/admins choose viewer or editor, and the recipient logs in with that email to see the notebook. Viewers can read saved content; editors can edit and execute code in the notebook's workspace. Revoking the share removes access immediately; use an unguessable password and grant editor only to trusted collaborators. The notebook URL `/notebook/<id>` can be sent to an already-authorized user, but it is not a public or anonymous share link: login and RBAC still apply.
 
 ## Is it safe to let anonymous visitors execute Python?
 

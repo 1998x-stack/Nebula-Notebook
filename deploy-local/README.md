@@ -13,6 +13,7 @@
 - 管理员密码：见仓库根目录 `.env` 的 `ADMIN_PASSWORD`（文件权限 600；首次启动时写入数据库，之后改 `.env` 不会自动改库里的密码）。
 - 已导入示例笔记本：**Nebula demo · 示例笔记本**（6 个 cell，CPU 可跑；GPU cell 会提示 CPU 镜像没有 PyTorch，这是预期行为）。
 - 示例笔记本已重置为干净状态（6 个 cell、无输出）；它的 **CPU runtime 当前处于 ready**（用户已连接过），刷新页面即可直接运行；如果已停止，点 **Connect** 重新启动。
+- **Notebook URL 路由**：新建或打开 notebook 后地址为 `/notebook/<uuid>`；刷新、浏览器前进/后退、直接访问都可用。链接仍需登录且有权限，不是公开分享链接。
 - **Pi agent 已接入**：用户级 `~/.pi/agent/mcp.json` 注册了 `nebula` MCP server；`pi mcp list` → `connected, 35 tools (codemode)`。其他客户端配置见 `mcp/README.md`。
 
 ## 2. 部署方式（本机实际执行）
@@ -147,6 +148,7 @@ NEBULA_HOST=127.0.0.1 ./deploy-local/start.sh
 | 浏览器 E2E（**局域网 HTTP origin**） | **7 / 7 通过** | 复现 `crypto.randomUUID` 缺失条件；连接、运行、新建 cell、Run all 全部通过，无 pageerror |
 | 图片输出自动保存（transient） | **PASS** | `display_data` 不再写入非法 `transient`；保存版本推进，`.save-state` 为 All changes saved |
 | MCP server 端到端 | **50 / 50 通过** | notebook/cell/run/workspace/export/interrupt/runtime start-stop、无 transient、错误提示 |
+| Notebook URL 路由 | **PASS** | 创建/打开 → `/notebook/<uuid>`；reload、back/forward、deep link、404 + Back、非法路径归一、删除回 `/` |
 | 非 ASCII 标题导出 | **PASS** | 中文标题 demo 点击 Export → 200、filename `Nebula_demo.ipynb`、nbformat 4（16 cells） |
 | Pi MCP 接入 | **PASS** | `pi mcp list`：connected，35 tools + resources |
 | demo 笔记本局域网复验 | **3 / 3 通过** | 运行输出、新建 cell、Run all 图片渲染 |
@@ -266,7 +268,7 @@ git diff -- backend/app/main.py backend/app/runtime.py frontend/src/main.jsx
 - `mcp/`：35-tool MCP server、工具目录、客户端配置（Pi/Claude/Codex/OpenCode）和 50 项 E2E。
 - `logs/mcp-test.log`：MCP 50/50 验收日志。
 - `deploy-local/e2e/e2e.cjs`：Playwright 浏览器 E2E。
-- `deploy-local/e2e/transient-test.cjs`、`export-test.cjs`：图片保存/非 ASCII 标题导出回归。
+- `deploy-local/e2e/transient-test.cjs`、`export-test.cjs`、`url-routing.cjs`：图片保存、非 ASCII 标题导出、URL 路由回归。
 - `deploy-local/e2e/xss.cjs`：HTML 输出 XSS 消毒验证。
 - `deploy-local/screenshots/`：登录、Dashboard、管理、运行、文件、分享、viewer、XSS、最终交付截图；`12-lan-inspect.png`（复现 `randomUUID` 缺失）、`13-lan-fixed.png`（局域网修复后）、`14-demo-lan-fixed.png`（demo 局域网 Run all）。**这些截图和大体积 wheel 为本地工件，未随仓库提交。**
 - `logs/extended-test-98.log`、`logs/nebula.log`、`logs/docker-build-cpu.log` 等（本地工件，未提交）。

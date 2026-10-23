@@ -158,5 +158,25 @@ function NotebookEditor({id,user,back,logout}) {
  {filesOpen&&<FilesDialog id={id} onClose={()=>setFilesOpen(false)}/>}</div>
 }
 
-function App(){const [user,setUser]=useState(null),[loading,setLoading]=useState(true),[opened,setOpened]=useState(null);useEffect(()=>{api('/auth/me').then(r=>{csrfToken=r.csrf;setUser(r.user)}).catch(()=>{}).finally(()=>setLoading(false))},[]);async function logout(){try{await api('/auth/logout',{method:'POST'})}catch{}csrfToken='';setUser(null);setOpened(null)}if(loading)return <div className="editor-loading"><NotebookPen size={30}/> Loading Nebula...</div>;return user?(opened?<NotebookEditor key={opened} id={opened} user={user} back={()=>setOpened(null)} logout={logout}/>:<Dashboard user={user} open={setOpened} logout={logout}/>):<Login onLogin={setUser}/>}
+const NOTEBOOK_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function notebookIdFromPath() {
+  const match = location.pathname.match(/^\/notebook\/([^/]+)\/?$/);
+  if (!match) return null;
+  try {
+    const id = decodeURIComponent(match[1]);
+    return NOTEBOOK_UUID.test(id) ? id : null;
+  } catch { return null; }
+}
+function notebookPath(id) { return '/notebook/' + encodeURIComponent(id); }
+function App(){
+  const [user,setUser]=useState(null),[loading,setLoading]=useState(true),[opened,setOpened]=useState(()=>notebookIdFromPath());
+  useEffect(()=>{api('/auth/me').then(r=>{csrfToken=r.csrf;setUser(r.user)}).catch(()=>{}).finally(()=>setLoading(false))},[]);
+  useEffect(()=>{const onPop=()=>{const id=notebookIdFromPath();setOpened(id);if(!id&&location.pathname.startsWith('/notebook/'))history.replaceState({},'','/')};window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);
+  useEffect(()=>{if(!notebookIdFromPath()&&location.pathname.startsWith('/notebook/'))history.replaceState({},'','/')},[]);
+  const open=useCallback(id=>{setOpened(id);const path=notebookPath(id);if(location.pathname!==path)history.pushState({notebook:id},'',path)},[]);
+  const home=useCallback(()=>{setOpened(null);if(location.pathname!=='/')history.replaceState({},'','/')},[]);
+  async function logout(){try{await api('/auth/logout',{method:'POST'})}catch{}csrfToken='';setUser(null);home()}
+  if(loading)return <div className="editor-loading"><NotebookPen size={30}/> Loading Nebula...</div>;
+  return user?(opened?<NotebookEditor key={opened} id={opened} user={user} back={home} logout={logout}/>:<Dashboard user={user} open={open} logout={logout}/>):<Login onLogin={setUser}/>;
+}
 createRoot(document.getElementById('root')).render(<App/>);

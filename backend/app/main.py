@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, or_, select, update, exists
@@ -585,6 +585,21 @@ async def delete_file(notebook_id: str, filename: str, db: AsyncSession = Depend
 
 # Single origin production deployment: build frontend/dist first, then serve with API.
 frontend_dist = Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
+
+
+@app.get('/notebook/{notebook_id}')
+async def notebook_spa(notebook_id: str):
+    """Serve the SPA shell for /notebook/<id> deep links.
+
+    The React app reads the id from the path, authenticates normally and asks the
+    API for the document. Register this before the catch-all StaticFiles mount.
+    """
+    index = frontend_dist / 'index.html'
+    if not index.is_file():
+        raise HTTPException(503, 'Frontend build not found; run npm run build')
+    return FileResponse(index)
+
+
 if frontend_dist.exists():
     app.mount('/', StaticFiles(directory=frontend_dist, html=True), name='frontend')
 

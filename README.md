@@ -20,6 +20,7 @@ Nebula Notebook is a web-based Python notebook server that lets you create, run,
 | Feature | Implementation | Current status |
 | --- | --- | --- |
 | Notebook editor | React, CodeMirror, Markdown and cell reordering | Implemented |
+| Notebook URLs | `/notebook/<id>` deep links with refresh and history navigation | Implemented |
 | Python execution | Jupyter kernel messages over an authorized WebSocket proxy | Implemented; host smoke test required |
 | CPU sessions | Per-notebook Docker runtime with resource limits | Implemented; host smoke test required |
 | NVIDIA GPU | Optional CUDA image and PyTorch-in-container availability probe | Implemented; requires supported host |

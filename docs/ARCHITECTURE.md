@@ -53,6 +53,10 @@ Administrator has broad access to all notebooks. This is a policy decision, and 
 
 `mcp/` exposes notebook CRUD, cell editing/insertion, execution, runtime control, workspace files, sharing and administration as 35 MCP tools plus two resources (`nebula://notebooks`, `nebula://notebooks/{id}`). Agents can create a real `.ipynb` at a local path and import it, or work directly on a notebook by id. Outputs returned by the kernel are normalized to the nbformat schema before being saved, so Jupyter-only fields such as `transient` never reach persistence. The adapter is tested with the MCP Python client and with Pi (`pi mcp list`); see `mcp/README.md`.
 
+## Notebook URLs
+
+`GET /notebook/<uuid>` returns the SPA shell (`frontend/dist/index.html`). The React app reads the id from the path, fetches `/api/notebooks/<uuid>`, and pushes/replaces History entries when opening, going back or deleting. Deep links, refresh and browser back/forward therefore work without server-side sessions being tied to a single page. Knowing the URL does not grant access: the API still enforces owner/editor/viewer permissions, and a missing or unauthorized notebook renders a not-found state with a Back action. The URL is not a public share link; sharing remains account-based.
+
 ## V2+/production roadmap
 
 - Dedicated isolated VM/microVM per tenant; network policy + filesystem quotas.

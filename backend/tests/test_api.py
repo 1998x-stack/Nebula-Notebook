@@ -1,7 +1,10 @@
 import json
+from pathlib import Path
 
 import pytest
 from .conftest import login
+
+FRONTEND_INDEX = Path(__file__).resolve().parents[2] / "frontend" / "dist" / "index.html"
 
 pytestmark = pytest.mark.asyncio
 
@@ -39,6 +42,14 @@ async def test_viewer_cannot_modify_or_start_runtime(clients):
     assert (await clients.put(f'/api/notebooks/{nb_id}',headers=viewer_headers,json={'title':'X','version':1,'document':created['document']})).status_code == 403
     assert (await clients.post(f'/api/notebooks/{nb_id}/runtime',headers=viewer_headers,json={'mode':'cpu'})).status_code == 403
     assert (await clients.put(f'/api/notebooks/{nb_id}/shares',headers=viewer_headers,json={'email':'viewer@test.local','role':'editor'})).status_code == 403
+
+
+@pytest.mark.skipif(not FRONTEND_INDEX.exists(), reason="frontend build not present")
+async def test_spa_notebook_deep_link_serves_index(clients):
+    response = await clients.get("/notebook/00000000-0000-0000-0000-000000000000")
+    assert response.status_code == 200, response.text
+    assert "text/html" in response.headers["content-type"]
+    assert "<div id=\"root\">" in response.text
 
 
 async def test_export_non_ascii_title_has_latin1_safe_header(clients):

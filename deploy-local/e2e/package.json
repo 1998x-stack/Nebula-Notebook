@@ -10,7 +10,8 @@
     "plot": "node plot.cjs",
     "transient": "node transient-test.cjs",
     "export": "node export-test.cjs",
-    "demo-lan": "node demo-lan.cjs"
+    "demo-lan": "node demo-lan.cjs",
+    "url": "node url-routing.cjs"
   },
   "dependencies": {
     "playwright": "^1.64.1"
