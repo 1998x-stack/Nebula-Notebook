@@ -30,3 +30,7 @@ Use user-intent questions as FAQ headings; answer each question directly, includ
 6. Ask users for reproducible issue reports; keep roadmap changes honest. Review security hardening before any open public execution environment.
 
 SEO/GEO are improved by accurate accessible documentation, consistent entity identity and verifiable project functionality, **not** by repeating the same keywords or adding invisible text. Search and AI citations are not guaranteed.
+
+## Name disambiguation and competitive discoverability
+
+Other independent open-source notebook projects also use the words **Nebula Notebook**, including an unrelated GitHub repository. In announcements, citations and social metadata, identify this implementation as **“Nebula Notebook by 1998x-stack”** and highlight its specific architecture: **FastAPI + Docker per-notebook runtimes + verified NVIDIA GPU + notebook RBAC**. Avoid implying affiliation with unrelated projects. Before investing in a logo or domain, check for naming/trademark conflicts and consider a more distinctive brand if discoverability becomes difficult.
