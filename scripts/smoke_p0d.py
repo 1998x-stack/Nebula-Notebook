@@ -86,7 +86,7 @@ async def main():
                                     # API must preserve uncertain state if the
                                     # browser socket closes during Python code.
                                     return 'dispatched'
-                                return 'dispatched' if False else await wait_for_idle(ws, ident)
+                                return await wait_for_idle(ws, ident)
                 return 'dispatched'
 
             async def wait_for_idle(ws, ident):
