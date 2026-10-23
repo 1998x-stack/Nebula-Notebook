@@ -100,10 +100,20 @@ disconnect scenario on a disposable test installation); two registered
 Agent accounts plus browser on the same Notebook. No hardware smoke or
 public multi-tenant claim from mocked CI alone.
 
-## P0-E — Collaboration recovery and merge (planned)
+## P0-E — Collaboration recovery and merge (implemented; host acceptance pending)
 
-Base/mine/latest three-way Cell comparison, explicit resolution UI and
-branch merge. Do not silently override another editor's source.
+Immutable base / unsaved mine / latest shared Notebook three-way preview;
+independent Cell edits merge, conflicting edits/deletes/orders require explicit
+mine-or-theirs choices. Editor browser preserves dirty drafts on 409 and
+offers an idempotent private draft Fork. MCP has read-only preview,
+optimistic commit and private-draft Fork tools. Transactional Notebook revision,
+CellOperation receipt and SSE event ensure recoverability; a fresh commit CAS
+prevents merging against an outdated preview.
+
+See [Collaboration Merge](COLLABORATION_MERGE.md). Automated tests cover
+multi-account ACL, revocation, duplicate retries, source conflict, order
+conflict and historical snapshots. Real two-Pi browser acceptance remains
+outstanding. This is **not** CRDT or arbitrary Notebook branch DAG merge.
 
 ## P0-F — Storage and event reliability (planned)
 

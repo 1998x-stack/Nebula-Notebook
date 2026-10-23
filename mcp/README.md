@@ -238,6 +238,24 @@ Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_R
 比较改动或从历史版本 Fork。未传 expected_version 时，MCP 会读取
 当前版本作为该次操作的基线，不会自行在冲突后自动改写。
 
+### P0-E: explicit conflict recovery and private draft Fork
+
+A shared Editor/Agent may use `notebook_merge_preview` to compare an unsaved
+draft with a retained immutable base version and the latest saved Notebook.
+Independent Cell changes merge automatically. Overlapping same-Cell edits,
+deletion conflicts, reorders and conflicting title/metadata edits require
+explicit resolutions such as `{"cell:example":"mine","order":"theirs"}`.
+The `notebook_merge_commit` tool requires `base_version`,
+`expected_latest_version` from preview, `mine_title`, `mine_document`,
+a unique `operation_id` and any conflict choices. On transport uncertainty
+reuse the **exact** operation ID and arguments. On HTTP 409 from a competing
+commit, preview against the newer version; never silently overwrite.
+`notebook_fork_draft` instead creates an independently owned Notebook from
+the unpublished draft without changing the shared source, using a stable
+`operation_id` for retry safety.
+
+[Full protocol and examples](../docs/COLLABORATION_MERGE.md).
+
 ### Agent execution visible in the browser (P0-B)
 
 When a notebook is open, MCP `cell_add`, `cell_update`, `cell_move`,
@@ -341,7 +359,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **54 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **57 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -364,9 +382,12 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `notebook_delete` | `notebook_id:str` |  |
 | `notebook_export` | `notebook_id:str`, `path:str`, `overwrite:bool` | `overwrite` = `True` |
 | `notebook_fork` | `notebook_id:str`, `version:int`, `title:str | null`, `folder_id:str | null` | `title` = `null`<br>`folder_id` = `null` |
+| `notebook_fork_draft` | `notebook_id:str`, `base_version:int`, `mine_title:str`, `mine_document:dict`, `operation_id:str`, `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_get` | `notebook_id:str`, `include_outputs:bool`, `include_data:bool` | `include_outputs` = `False`<br>`include_data` = `False` |
 | `notebook_import` | `path:str`, `title:str | null` | `title` = `null` |
 | `notebook_list` | `folder_id:str | null` | `folder_id` = `null` |
+| `notebook_merge_commit` | `notebook_id:str`, `base_version:int`, `expected_latest_version:int`, `mine_title:str`, `mine_document:dict`, `operation_id:str`, `resolutions:dict[str, Literal['mine', 'theirs']] | None` | `resolutions` = `null` |
+| `notebook_merge_preview` | `notebook_id:str`, `base_version:int`, `mine_title:str`, `mine_document:dict`, `resolutions:dict[str, Literal['mine', 'theirs']] | None` | `resolutions` = `null` |
 | `notebook_move` | `notebook_id:str`, `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_rename` | `notebook_id:str`, `title:str` |  |
 | `notebook_run_cells` | `notebook_id:str`, `start:int`, `count:int`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `start` = `0`<br>`count` = `5`<br>`timeout` = `120`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |

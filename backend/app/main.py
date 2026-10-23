@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, update, exists
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -29,6 +30,7 @@ from .security import (hash_password, verify_password, rate_check, new_session, 
 from .validation import default_document, checked_document
 from .history import snapshot, backfill_current_revisions
 from .cell_ops import apply_cell_operation
+from .merge import merge_plan, commit_merge
 from .kernel_gate import claim as claim_kernel, release as release_kernel, uncertain as uncertain_kernel, recover_gates, reset_after_runtime_stop
 from .events import append_event, cursor as event_cursor, delta as document_delta, notebook_stream
 from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtime
@@ -149,6 +151,26 @@ class CellMutation(BaseModel):
     after_cell_id: str | None = Field(default=None, max_length=80)
     cell_type: Literal['code', 'markdown', 'raw'] | None = None
     source: str | None = None
+
+
+class MergePreview(BaseModel):
+    base_version: int = Field(ge=1)
+    mine_title: str = Field(min_length=1, max_length=200)
+    mine_document: dict
+    resolutions: dict[str, Literal['mine', 'theirs']] = Field(default_factory=dict)
+
+
+class ForkDraft(BaseModel):
+    base_version: int = Field(ge=1)
+    mine_title: str = Field(min_length=1, max_length=200)
+    mine_document: dict
+    folder_id: str | None = None
+    operation_id: str = Field(min_length=8, max_length=128)
+
+
+class MergeCommit(MergePreview):
+    expected_latest_version: int = Field(ge=1)
+    operation_id: str = Field(min_length=8, max_length=128)
 
 
 class ShareNotebook(BaseModel):
@@ -493,6 +515,91 @@ async def mutate_cell(notebook_id: str, body: CellMutation,
     """Strict CAS for every add/update/delete/move; same operation ID is replay-safe."""
     nb, _ = await require_notebook(db, notebook_id, actor, 'editor')
     return await apply_cell_operation(db, nb, actor.id, body)
+
+
+@app.post('/api/notebooks/{notebook_id}/merge/fork-draft')
+async def fork_unsaved_draft(notebook_id: str, body: ForkDraft,
+                            db: AsyncSession = Depends(get_db),
+                            actor=Depends(csrf_user)):
+    """Preserve an unresolved draft as an independent private Notebook.
+
+    Does not publish a draft into the shared source and never copies Kernel
+    memory, workspace files, or source permissions.
+    """
+    source, _ = await require_notebook(db, notebook_id, actor, 'editor')
+    fingerprint = hashlib.sha256(json.dumps(
+        body.model_dump(exclude={'operation_id'}),sort_keys=True,ensure_ascii=False,
+        separators=(',', ':')).encode('utf-8')).hexdigest()
+    prior = await db.scalar(select(CellOperation).where(
+        CellOperation.notebook_id == notebook_id,
+        CellOperation.operation_id == body.operation_id))
+    if prior:
+        if prior.actor_id != actor.id or prior.request_hash != fingerprint:
+            raise HTTPException(409, 'Operation ID belongs to other inputs or actor')
+        child = await db.get(Notebook, prior.result.get('fork_id'))
+        if not child:
+            raise HTTPException(404, 'Previously created private Fork was deleted')
+        return await document_payload(db, child, 'owner')
+    if body.base_version > source.version:
+        raise HTTPException(422, 'Base cannot be newer than the shared source')
+    if body.folder_id:
+        await require_folder(db, body.folder_id, actor)
+    document = checked_document(body.mine_document)
+    new_name = body.mine_title[:192] + ' (draft)' if len(body.mine_title) > 192 else body.mine_title + ' (draft)'
+    fork = Notebook(id=str(uuid4()), owner_id=actor.id, title=new_name,
+                    folder_id=body.folder_id, document=document, version=1,
+                    document_bytes=document_size(document),
+                    forked_from_notebook_id=source.id,
+                    forked_from_version=body.base_version)
+    db.add(fork)
+    db.add(CellOperation(id=str(uuid4()),notebook_id=notebook_id,actor_id=actor.id,
+                         operation_id=body.operation_id,request_hash=fingerprint,
+                         expected_version=body.base_version,committed_version=source.version,
+                         result={'fork_id':fork.id}))
+    snapshot(db, fork, version=1, title=new_name, document=document,
+             author_id=actor.id, reason='fork')
+    append_event(db, fork.id, 'document.committed', actor_id=actor.id,
+                 version=1, payload={'full_sync': True})
+    log_event(db, actor.id, 'notebook.fork_draft', fork.id,
+              f'{notebook_id}@{body.base_version}')
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        prior = await db.scalar(select(CellOperation).where(
+            CellOperation.notebook_id == notebook_id,
+            CellOperation.operation_id == body.operation_id))
+        if not prior or prior.actor_id != actor.id or prior.request_hash != fingerprint:
+            raise HTTPException(409, 'Draft Fork operation ID already used')
+        child = await db.get(Notebook, prior.result.get('fork_id'))
+        if not child:
+            raise HTTPException(404, 'Previously created private Fork was deleted')
+        return await document_payload(db, child, 'owner')
+    return await document_payload(db, fork, 'owner')
+
+
+@app.post('/api/notebooks/{notebook_id}/merge/preview')
+async def preview_notebook_merge(notebook_id: str, body: MergePreview,
+                                 db: AsyncSession = Depends(get_db),
+                                 actor=Depends(current_user)):
+    """Read-only, deterministic three-way preview; never silently choose a conflict."""
+    nb, _ = await require_notebook(db, notebook_id, actor, 'editor')
+    plan = await merge_plan(db, nb, body)
+    return {'base_version': body.base_version, 'latest_version': nb.version,
+            'can_merge': plan['can_merge'], 'conflicts': plan['conflicts'],
+            'applied_resolutions': plan['applied_resolutions'],
+            'ignored_resolutions': plan['ignored_resolutions'],
+            'merged_title': plan['title'] if plan['can_merge'] else None,
+            'merged_document': plan['document'] if plan['can_merge'] else None}
+
+
+@app.post('/api/notebooks/{notebook_id}/merge/commit')
+async def commit_notebook_merge(notebook_id: str, body: MergeCommit,
+                                db: AsyncSession = Depends(get_db),
+                                actor=Depends(csrf_user)):
+    """Explicit CAS: the accepted preview must still match the latest version."""
+    nb, _ = await require_notebook(db, notebook_id, actor, 'editor')
+    return await commit_merge(db, nb, actor.id, body)
 
 
 @app.put('/api/notebooks/{notebook_id}')
