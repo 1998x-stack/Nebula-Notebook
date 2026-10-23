@@ -625,6 +625,14 @@ class NebulaClient:
     async def get_version(self, notebook_id: str, version: int) -> dict:
         return await self._json("GET", f"/api/notebooks/{notebook_id}/versions/{version}")
 
+    async def fork_unsaved_draft(self, notebook_id: str, base_version: int,
+                                mine_title: str, mine_document: dict,
+                                operation_id: str, folder_id: str | None = None) -> dict:
+        return await self._json('POST', f'/api/notebooks/{notebook_id}/merge/fork-draft',
+                                json={'base_version': base_version, 'mine_title': mine_title,
+                                      'mine_document': mine_document, 'operation_id': operation_id,
+                                      'folder_id': folder_id})
+
     async def preview_merge(self, notebook_id: str, base_version: int,
                             mine_title: str, mine_document: dict,
                             resolutions: dict[str, str] | None = None) -> dict:
