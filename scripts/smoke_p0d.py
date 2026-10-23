@@ -145,9 +145,19 @@ async def main():
             target = next(c for c in doc['document']['cells'] if c['id'] == cell['id'])
             require('MANAGED_RUN_OK' in str(target.get('outputs', '')),
                     'Successful managed run output missing from Notebook')
-            state = (await api('GET', diagnostic_path)).json()
-            require(state['gate'] is None and not state['recovery_required'],
-                    'Kernel gate must be released after observed completion')
+            # The run's terminal status/event commit precedes the final
+            # gate-release transaction by a small window. Verify eventual
+            # release without assuming they commit in the same transaction.
+            release_deadline = time.monotonic() + 10
+            while True:
+                state = (await api('GET', diagnostic_path)).json()
+                if state['gate'] is None:
+                    break
+                require(time.monotonic() < release_deadline,
+                        'Kernel gate was not released after observed completion')
+                await asyncio.sleep(0.2)
+            require(not state['recovery_required'],
+                    'Kernel should not need recovery after successful idle')
             print('PASS: real legacy-versus-managed execution serializes and output persists')
 
             if FAULTS:
