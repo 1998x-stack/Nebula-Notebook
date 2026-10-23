@@ -31,7 +31,26 @@ def delta(old: dict | None, new: dict, title: str) -> dict:
     if (len(old_map) != len(old_cells) or len(new_map) != len(new_cells)
             or any(not x for x in (*old_map.keys(), *new_map.keys()))):
         return {'full_sync': True}
-    changed = [c for c in new_cells if c != old_map.get(c['id'])]
+    def canonical(cell):
+        if cell is None:
+            return None
+        # nbformat normalizes source strings into string arrays on save; this
+        # must not manufacture a change event for otherwise-identical cells.
+        value = dict(cell)
+        source = value.get('source', '')
+        value['source'] = ''.join(source) if isinstance(source, list) else source
+        outputs = []
+        for output in value.get('outputs', []):
+            item = dict(output)
+            stream = item.get('text')
+            if isinstance(stream, list):
+                item['text'] = ''.join(stream)
+            outputs.append(item)
+        if 'outputs' in value:
+            value['outputs'] = outputs
+        return value
+
+    changed = [c for c in new_cells if canonical(c) != canonical(old_map.get(c['id']))]
     data = {'title': title, 'order': [c['id'] for c in new_cells],
             'changed': changed, 'removed': [c['id'] for c in old_cells if c['id'] not in new_map],
             'full_sync': False}
