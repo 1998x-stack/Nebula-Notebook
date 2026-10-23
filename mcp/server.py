@@ -483,6 +483,97 @@ async def cell_move(notebook_id: str, new_index: int, cell_id: str | None = None
         expected_version=expected_version, operation_id=operation_id)
 
 
+# P1-A: immutable evaluation protocol and bounded, evidence-backed experiments.
+# Agent chooses code; Nebula only scores an actual successful evaluator Run.
+@mcp.tool(annotations=READ)
+async def research_list(notebook_id: str) -> list[dict]:
+    """List all recorded experiments visible in this Notebook."""
+    return await client.research_list(notebook_id)
+
+
+@mcp.tool(annotations=WRITE)
+async def research_create(notebook_id: str, title: str, evaluator_cell_id: str,
+                          metric_name: str, direction: Literal["min", "max"],
+                          dataset_sha256: str, environment_sha256: str,
+                          max_trials: int = 5, trial_timeout_seconds: int = 300,
+                          mode: Literal["cpu", "gpu"] = "cpu") -> dict:
+    """Freeze evaluator source SHA, dataset/environment hashes and trial budget.
+
+    Evaluator Cell must already exist. Dataset/environment SHA values are
+    **assertions** from the operator; Nebula cannot isolate arbitrary Python.
+    Evaluator prints exactly one NEBULA_METRIC JSON record from stdout.
+    """
+    _require_write("research_create")
+    return await client.research_create(notebook_id, title=title,
+        evaluator_cell_id=evaluator_cell_id, metric_name=metric_name, direction=direction,
+        dataset_sha256=dataset_sha256, environment_sha256=environment_sha256,
+        max_trials=max_trials, trial_timeout_seconds=trial_timeout_seconds, mode=mode)
+
+
+@mcp.tool(annotations=READ)
+async def research_get(notebook_id: str, experiment_id: str) -> dict:
+    """Inspect trials, rankings, checkpoints and safe resume instructions."""
+    return await client.research_get(notebook_id, experiment_id)
+
+
+@mcp.tool(annotations=WRITE)
+async def research_trial_register(notebook_id: str, experiment_id: str,
+                                  trial_key: str, run_id: str,
+                                  notebook_version: int, hypothesis: str) -> dict:
+    """Link real run_submit result to a retained source revision, within budget.
+
+    Reuse the same trial_key on network retries. This does not submit code.
+    """
+    _require_write("research_trial_register")
+    return await client.research_trial_register(
+        notebook_id, experiment_id, trial_key, run_id, notebook_version, hypothesis)
+
+
+@mcp.tool(annotations=WRITE)
+async def research_trial_finalize(notebook_id: str, experiment_id: str,
+                                  trial_id: str, evaluator_run_id: str) -> dict:
+    """Rank ONLY a successful unchanged evaluator Run after candidate succeeds.
+
+    The evaluator must print NEBULA_METRIC: {"name":"metric","value":0.123}
+    as its single matching stdout line. Do not supply unverified scores.
+    """
+    _require_write("research_trial_finalize")
+    return await client.research_trial_finalize(
+        notebook_id, experiment_id, trial_id, evaluator_run_id)
+
+
+@mcp.tool(annotations=WRITE)
+async def research_close(notebook_id: str, experiment_id: str) -> dict:
+    """Stop accepting new trial records; existing Runs are NOT interrupted."""
+    _require_write("research_close")
+    return await client.research_close(notebook_id, experiment_id)
+
+
+@mcp.tool(annotations=READ)
+async def research_artifacts(notebook_id: str, experiment_id: str) -> list[dict]:
+    """List versioned immutable Artifact SHA-256 manifests."""
+    return await client.research_artifacts(notebook_id, experiment_id)
+
+
+@mcp.tool(annotations=WRITE)
+async def research_artifact_upload(notebook_id: str, experiment_id: str,
+                                   trial_id: str, path: str, name: str | None = None) -> dict:
+    """Upload ≤8 MB immutable artifact from the MCP client filesystem root."""
+    _require_write("research_artifact_upload")
+    return await client.research_artifact_upload(
+        notebook_id, experiment_id, trial_id, path, name)
+
+
+@mcp.tool(annotations=WRITE)
+async def research_artifact_download(notebook_id: str, experiment_id: str,
+                                     artifact_id: str, path: str,
+                                     overwrite: bool = False) -> dict:
+    """Download verified Artifact to a path inside NEBULA_MCP_FS_ROOT."""
+    _require_write("research_artifact_download")
+    return await client.research_artifact_download(
+        notebook_id, experiment_id, artifact_id, path, overwrite)
+
+
 # Durable jobs keep running even when an MCP request ends. Use for training/long cells.
 @mcp.tool(annotations=EXECUTE)
 async def run_submit(notebook_id: str, cell_id: str, idempotency_key: str,
