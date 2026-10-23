@@ -144,6 +144,23 @@ Capture at 1440x900 or similar; use anonymized demo notebooks. Optimize screensh
 These illustrate current and proposed features; do not depict proposed features as shipped.
 -->
 
+### Recoverable shared editing and explicit three-way merges (P0-E)
+
+If a human or MCP Agent edits an older Notebook version while another
+collaborator saves, Nebula now supports **base / mine / latest** Cell-level
+merge preview instead of forcing a full reload. Independent Cell changes are
+combined; competing edits to the same Cell, deletion versus modification
+and incompatible Cell moves require an explicit `mine` / `theirs` choice.
+The browser keeps unsaved code safe on HTTP 409, and an editor can
+**save the draft as a private Fork** without changing the shared Notebook.
+
+Merge commit uses an exact latest-version CAS, a stable idempotent operation
+ID, immutable history, and the existing live SSE stream. Pi, OpenCode,
+Claude and Codex can use MCP `notebook_merge_preview`,
+`notebook_merge_commit` and `notebook_fork_draft`.
+
+[Three-way merge design and acceptance →](docs/COLLABORATION_MERGE.md).
+
 ### Execution lifecycle reliability (P0-D)
 
 Nebula now commits durable Run terminal state and `run.finished` SSE events
