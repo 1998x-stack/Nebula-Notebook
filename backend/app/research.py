@@ -79,6 +79,13 @@ async def get_experiment(db, notebook_id, experiment_id):
 
 async def create_experiment(db: AsyncSession, notebook: Notebook, actor_id: str, body):
     spec = body.model_dump(mode='json')
+    if not METRIC.fullmatch(body.metric_name) or not KEY.fullmatch(body.title.replace(' ', '_')[:128]):
+        # A title is human-readable and may contain spaces/punctuation. Validate
+        # only the metric name here; titles are bounded by the API model.
+        if not METRIC.fullmatch(body.metric_name):
+            _problem('Metric name must be a simple identifier')
+    if not SHA.fullmatch(body.dataset_sha256) or not SHA.fullmatch(body.environment_sha256):
+        _problem('Dataset and environment identifiers must be lowercase SHA-256 digests')
     cell = _cell(notebook.document, body.evaluator_cell_id)
     if cell is None:
         _problem('Evaluator must be an existing code Cell')
@@ -111,6 +118,8 @@ async def create_experiment(db: AsyncSession, notebook: Notebook, actor_id: str,
 
 
 async def register_trial(db: AsyncSession, exp: ResearchExperiment, actor_id: str, body):
+    if not KEY.fullmatch(body.trial_key):
+        _problem('Trial key contains unsupported characters')
     existing = await db.scalar(select(ResearchTrial).where(
         ResearchTrial.experiment_id == exp.id, ResearchTrial.trial_key == body.trial_key))
     if existing:
