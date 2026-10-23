@@ -54,29 +54,20 @@ class RunConsistencyTests(unittest.IsolatedAsyncioTestCase):
         for call in client.save_notebook.await_args_list:
             self.assertEqual(call.args[3]["cells"][0]["outputs"][0]["text"], "1\n")
 
-    async def test_shared_cell_update_requires_matching_version(self):
+    async def test_shared_cell_update_passes_expected_version(self):
         client = client_fixture()
-        # The mutator callback sees a later version, like a competing Agent save.
-        async def mutate(notebook_id, apply):
-            current = notebook(source="from_other_agent = True", version=3)
-            apply(current["document"], current)
-            return None, 4
-        client.mutate = mutate
-        with self.assertRaisesRegex(Conflict, "Notebook changed"):
-            await client.update_cell("notebook-1", cell_id="cell-1",
-                                     source="my_new_value = 1", expected_version=2)
+        client.cell_operation = AsyncMock(return_value={"version": 4})
+        await client.update_cell("notebook-1", cell_id="cell-1",
+                                 source="new", expected_version=2, operation_id="op-abc123")
+        self.assertEqual(client.cell_operation.await_args.kwargs["expected_version"], 2)
+        self.assertEqual(client.cell_operation.await_args.kwargs["operation_id"], "op-abc123")
 
-    async def test_old_cell_update_remains_supported_without_expected_version(self):
+    async def test_cell_update_without_base_fetches_version(self):
         client = client_fixture()
-        async def mutate(notebook_id, apply):
-            current = notebook(version=3)
-            apply(current["document"], current)
-            self.assertEqual(current["document"]["cells"][0]["source"], "accepted = 1")
-            return None, 4
-        client.mutate = mutate
-        result = await client.update_cell("notebook-1", cell_id="cell-1",
-                                          source="accepted = 1")
-        self.assertEqual(result["version"], 4)
+        client.get_notebook = AsyncMock(return_value=notebook(version=3))
+        client._json = AsyncMock(return_value={"version": 4})
+        await client.update_cell("notebook-1", cell_id="cell-1", source="accepted")
+        self.assertEqual(client._json.await_args.kwargs["json"]["expected_version"], 3)
 
     async def test_run_all_rejects_modified_cell(self):
         client = client_fixture()

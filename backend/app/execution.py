@@ -26,6 +26,7 @@ from .runtime import start_runtime, interrupt_runtime
 from .security import require_notebook
 from .validation import checked_document
 from .history import snapshot
+from .kernel_gate import wait_for_gate, release as release_kernel, uncertain as uncertain_kernel
 from .events import append_event, emit_run, delta as document_delta
 
 log = logging.getLogger(__name__)
@@ -266,7 +267,11 @@ async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool
 
 
 async def worker(run_id: str):
-    """A task holds a per-notebook lock, but never runs in a second process."""
+    """Managed runs and direct Kernel sockets use the same exclusive gate."""
+    gate_token = None
+    kernel_idle_confirmed = False
+    request_dispatched = False
+    notebook_id = None
     try:
         async with SessionLocal() as db:
             run = await db.get(ExecutionRun, run_id)
@@ -275,11 +280,13 @@ async def worker(run_id: str):
             notebook_id = run.notebook_id
         lock = _locks.setdefault(notebook_id, asyncio.Lock())
         async with lock:
+            gate_token = await wait_for_gate(notebook_id, seconds=60)
             async with SessionLocal() as db:
                 run = await db.get(ExecutionRun, run_id)
                 if not run or run.status == 'cancelled':
                     return
                 if run.cancel_requested:
+                    kernel_idle_confirmed = True
                     await _finish(run_id, 'cancelled')
                     return
                 run.status, run.started_at = 'running', utcnow()
@@ -297,14 +304,17 @@ async def worker(run_id: str):
             async with SessionLocal() as db:
                 check = await db.get(ExecutionRun, run_id)
                 if not check or check.cancel_requested:
+                    kernel_idle_confirmed = True
                     await _finish(run_id, 'cancelled')
                     return
             try:
                 async def stream_batch(batch):
                     await emit_run(run_id, 'run.output', {
                         'outputs': [live_event_preview(entry) for entry in batch]})
+                request_dispatched = True
                 status, outputs, count, error = await execute_jupyter(
                     rt, code, timeout, on_output=stream_batch)
+                kernel_idle_confirmed = True
             except asyncio.TimeoutError:
                 try:
                     await interrupt_runtime(rt)
@@ -330,6 +340,11 @@ async def worker(run_id: str):
         log.exception('Execution run %s failed', run_id)
         await _finish(run_id, 'failed', error=type(exc).__name__ + ': ' + str(exc))
     finally:
+        if gate_token and notebook_id:
+            if kernel_idle_confirmed or not request_dispatched:
+                await release_kernel(notebook_id, gate_token)
+            else:
+                await uncertain_kernel(notebook_id, gate_token)
         _tasks.pop(run_id, None)
 
 

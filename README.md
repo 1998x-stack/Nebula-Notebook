@@ -144,6 +144,23 @@ Capture at 1440x900 or similar; use anonymized demo notebooks. Optimize screensh
 These illustrate current and proposed features; do not depict proposed features as shipped.
 -->
 
+### Collision-safe multi-Agent operations (P0-C)
+
+Shared editors and MCP Agents can now add, update, move and delete Cells through
+one server-authoritative, idempotent API. Each operation carries an
+`expected_version` and a stable `operation_id`, produces a durable SSE
+event and a forkable revision, and returns **409** on competing changes rather
+than silently overwriting another user's work.
+
+The browser's Kernel WebSocket and MCP managed `run_submit` share a
+database-backed exclusive execution gate. If the API or Kernel connection
+drops before the matching Kernel idle state, the gate becomes **uncertain**;
+stopping/restarting that Notebook Runtime intentionally resets it. This
+conservative mechanism prevents double dispatch but does not guarantee
+exactly-once Python side effects.
+
+[Detailed P0-C protocol and acceptance checklist →](docs/EXECUTION_ARBITRATION.md).
+
 ### Live notebook collaboration events (P0-B)
 
 The editor subscribes to `GET /api/notebooks/{id}/events` using a persisted

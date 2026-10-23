@@ -27,11 +27,13 @@ from .security import (hash_password, verify_password, rate_check, new_session, 
                        admin_only, admin_write, require_notebook, websocket_identity)
 from .validation import default_document, checked_document
 from .history import snapshot, backfill_current_revisions
+from .cell_ops import apply_cell_operation
+from .kernel_gate import claim as claim_kernel, release as release_kernel, uncertain as uncertain_kernel, recover_gates, reset_after_runtime_stop
 from .events import append_event, cursor as event_cursor, delta as document_delta, notebook_stream
 from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtime
 from .execution import (schedule_run, recover_runs, shutdown_runs, submit_run,
                         request_cancel, public_run, ACTIVE)
-from .db import ExecutionRun, NotebookEvent
+from .db import ExecutionRun, NotebookEvent, CellOperation
 from typing import Literal
 
 
@@ -53,6 +55,7 @@ async def lifespan(app: FastAPI):
             if 'forked_from_version' not in cols:
                 await conn.exec_driver_sql('ALTER TABLE notebooks ADD COLUMN forked_from_version INTEGER')
     await recover_runs()
+    await recover_gates()
     async with SessionLocal() as db:
         await backfill_current_revisions(db)
         # One-time backfill for notebooks created before document_bytes existed.
@@ -122,10 +125,22 @@ class SaveNotebook(BaseModel):
     document: dict
 
 
+
+class CellMutation(BaseModel):
+    operation_id: str = Field(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
+    expected_version: int = Field(ge=1)
+    action: Literal['add', 'update', 'delete', 'move']
+    cell_id: str | None = Field(default=None, max_length=80)
+    index: int | None = None
+    new_index: int | None = None
+    after_cell_id: str | None = Field(default=None, max_length=80)
+    cell_type: Literal['code', 'markdown', 'raw'] | None = None
+    source: str | None = None
+
+
 class ShareNotebook(BaseModel):
     email: str
     role: str
-
 
 
 class SubmitExecutionRun(BaseModel):
@@ -458,6 +473,15 @@ async def fork_notebook(notebook_id: str, body: ForkNotebook, db: AsyncSession =
     return await document_payload(db, fork, 'owner')
 
 
+
+@app.post('/api/notebooks/{notebook_id}/cell-operations')
+async def mutate_cell(notebook_id: str, body: CellMutation,
+                      db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
+    """Strict CAS for every add/update/delete/move; same operation ID is replay-safe."""
+    nb, _ = await require_notebook(db, notebook_id, actor, 'editor')
+    return await apply_cell_operation(db, nb, actor.id, body)
+
+
 @app.put('/api/notebooks/{notebook_id}')
 async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     nb, role = await require_notebook(db, notebook_id, actor, 'editor')
@@ -488,9 +512,11 @@ async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), 
     if active_run:
         raise HTTPException(409, 'Cancel and finish managed execution runs before deleting notebook')
     await stop_runtime(db, notebook_id, actor.id)
+    await reset_after_runtime_stop(notebook_id)
     await db.execute(delete(NotebookPermission).where(NotebookPermission.notebook_id == notebook_id))
     await db.execute(delete(NotebookRevision).where(NotebookRevision.notebook_id == notebook_id))
     await db.execute(delete(NotebookEvent).where(NotebookEvent.notebook_id == notebook_id))
+    await db.execute(delete(CellOperation).where(CellOperation.notebook_id == notebook_id))
     await db.execute(delete(ExecutionRun).where(ExecutionRun.notebook_id == notebook_id))
     await db.delete(nb)
     log_event(db, actor.id, 'notebook.delete', notebook_id)
@@ -682,6 +708,7 @@ async def shutdown_runtime(notebook_id: str, db: AsyncSession = Depends(get_db),
     if active_run:
         raise HTTPException(409, 'Cancel the managed execution run before stopping Runtime')
     await stop_runtime(db, notebook_id, actor.id)
+    await reset_after_runtime_stop(notebook_id)
     return {'status': 'stopped'}
 
 
@@ -762,6 +789,8 @@ async def kernel_channels(ws: WebSocket, notebook_id: str):
             await kernel_handshake(kernel_ws)
             await ws.accept()
 
+            holder = {'token': None, 'message_id': None}
+
             async def client_to_kernel():
                 while True:
                     msg = await ws.receive_text()
@@ -799,6 +828,16 @@ async def kernel_channels(ws: WebSocket, notebook_id: str):
                             except HTTPException:
                                 await ws.close(code=1008, reason='Access revoked')
                                 return
+                        if kind == 'execute_request':
+                            if holder['token']:
+                                await ws.close(code=1013, reason='Execution already in flight')
+                                return
+                            try:
+                                holder['token'] = await claim_kernel(notebook_id, 'legacy')
+                                holder['message_id'] = parsed['header']['msg_id']
+                            except HTTPException:
+                                await ws.close(code=1013, reason='Kernel reserved; wait or stop Runtime')
+                                return
                         await kernel_ws.send(msg)
                     except (ValueError, KeyError, TypeError):
                         await ws.close(code=1008, reason='Invalid kernel message')
@@ -806,6 +845,17 @@ async def kernel_channels(ws: WebSocket, notebook_id: str):
 
             async def kernel_to_client():
                 async for msg in kernel_ws:
+                    if holder['token'] and isinstance(msg, str):
+                        try:
+                            event = json.loads(msg)
+                            if (event.get('header', {}).get('msg_type') == 'status'
+                                and event.get('parent_header', {}).get('msg_id') == holder['message_id']
+                                and event.get('content', {}).get('execution_state') == 'idle'):
+                                await release_kernel(notebook_id, holder['token'])
+                                holder['token'] = None
+                                holder['message_id'] = None
+                        except (ValueError, TypeError):
+                            pass
                     if isinstance(msg, bytes):
                         await ws.send_bytes(msg)
                     else:
@@ -821,6 +871,9 @@ async def kernel_channels(ws: WebSocket, notebook_id: str):
                     try: task.result()
                     except (WebSocketDisconnect, ConnectionClosed, RuntimeError): pass
             finally:
+                # Disconnect is not evidence that Python stopped; preserve admission safety.
+                if holder['token']:
+                    await uncertain_kernel(notebook_id, holder['token'])
                 # Do not leave the browser socket silently open if the kernel relay ends.
                 try: await ws.close()
                 except RuntimeError: pass

@@ -23,6 +23,18 @@
 | Agent 接入 | 54-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
 | 运维 | Ubuntu 检测、部署脚本、冒烟测试与 CI |
 
+## P0-C：共享 Cell 完整冲突保护与统一执行互斥
+
+`cell_add`、`cell_insert`、`cell_update`、`cell_move`、
+`cell_delete` 均通过后端 CAS 和 `operation_id` 幂等接口提交。
+并发冲突返回 409，不能静默覆盖另一位 Agent 的修改。
+浏览器 Kernel WebSocket 与 Agent 托管运行共享唯一执行门禁。
+断连后不确定是否执行完成时保持锁定，需要显式停止 Runtime 恢复。
+这是面向可信单实例部署的版本化协作，不等于 CRDT 或任意 Python
+副作用的 exactly-once。
+
+[设计、安全边界和验收流程](docs/EXECUTION_ARBITRATION.md)
+
 ## 多账户共享研究、版本与自由 Fork
 
 每个注册用户使用自己的 MCP 凭据。原拥有者可将**同一个 Notebook**

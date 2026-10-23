@@ -71,7 +71,11 @@ the browser shows accurate ordering and output without refresh; reconnect
 replays missed events without duplicates; hidden-tab CPU/network remain low;
 no cross-user notebook event leakage.
 
-## P0-C — Execution arbitration and correctness
+## P0-C — Execution arbitration and correctness (implemented; hardware acceptance pending)
+
+**Implemented:** server-side database admission and `CellOperation` strict
+CAS with stable operation IDs and SSE event provenance. See
+[Execution Arbitration](EXECUTION_ARBITRATION.md).
 
 **Deliverable:** server-side admission that serializes *all* execute requests
 per Notebook (legacy browser WS and managed runs), not only managed tasks.
