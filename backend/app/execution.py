@@ -157,7 +157,10 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, li
                 if reply is None:
                     raise RuntimeError('Kernel became idle without an execute_reply')
                 status = 'failed' if reply.get('status') != 'ok' or any(o['output_type'] == 'error' for o in outputs) else 'succeeded'
-                return status, outputs, count, None
+                error = None if status == 'succeeded' else (
+                    str(reply.get('ename') or 'Kernel execution failed')[:160] + ': ' +
+                    str(reply.get('evalue') or '')[:400])
+                return status, outputs, count, error
 
 
 async def _finish(run_id: str, status: str, *, outputs=None, count=None, error=None):

@@ -358,6 +358,10 @@ async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession =
 @app.delete('/api/notebooks/{notebook_id}')
 async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     nb, _ = await require_notebook(db, notebook_id, actor, 'owner')
+    active_run = await db.scalar(select(ExecutionRun.id).where(
+        ExecutionRun.notebook_id == notebook_id, ExecutionRun.status.in_(ACTIVE)).limit(1))
+    if active_run:
+        raise HTTPException(409, 'Cancel and finish managed execution runs before deleting notebook')
     await stop_runtime(db, notebook_id, actor.id)
     await db.execute(delete(NotebookPermission).where(NotebookPermission.notebook_id == notebook_id))
     await db.delete(nb)
@@ -545,6 +549,10 @@ async def launch_runtime(notebook_id: str, body: LaunchRuntime, db: AsyncSession
 @app.delete('/api/notebooks/{notebook_id}/runtime')
 async def shutdown_runtime(notebook_id: str, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     await require_notebook(db, notebook_id, actor, 'editor')
+    active_run = await db.scalar(select(ExecutionRun.id).where(
+        ExecutionRun.notebook_id == notebook_id, ExecutionRun.status.in_(ACTIVE)).limit(1))
+    if active_run:
+        raise HTTPException(409, 'Cancel the managed execution run before stopping Runtime')
     await stop_runtime(db, notebook_id, actor.id)
     return {'status': 'stopped'}
 

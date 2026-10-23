@@ -28,7 +28,7 @@ Content-Type: application/json
 }
 ```
 
-201? No: new submissions return **202**, same-key retries return **200**
+New submissions return **202**, same-key retries return **200**
 with the same run ID. Different source/cell/mode/timeout with an already-used
 key returns 409. When retries occur, reuse the original key.
 
@@ -79,7 +79,7 @@ client, poll `run_wait` until terminal, then open the same Notebook in the UI.
   in the already-trusted Kernel container; cancellation does not undo them.
 - Starting a managed job excludes *new* legacy WebSocket execute messages,
   but code already executing before job admission may still overlap.
-- Each notebook has a process-local execution lock. Multiple API workers
+- Deleting a Notebook or stopping its Runtime returns HTTP 409 while a managed\n  execution is queued, running or cancelling. Cancel/finish first.\n- Each notebook has a process-local execution lock. Multiple API workers
   or multiple app instances are **not supported**: a database-backed queue,
   leader election and distributed locks are needed first.
 - On server restart unfinished database runs are marked interrupted, with no
@@ -99,3 +99,16 @@ client, poll `run_wait` until terminal, then open the same Notebook in the UI.
 4. P1 Multi-kernel: Kernel registry + IRkernel / xeus-cling execution images.
 5. P1 release: reproducible multi-OS smoke acceptance, screenshots and
    documented threat model.
+
+### Real CPU acceptance (on a developer host)
+
+```bash
+NEBULA_SMOKE_EMAIL='your-agent-email' \\
+NEBULA_SMOKE_PASSWORD='your-agent-password' \\
+  backend/.venv/bin/python scripts/smoke_runs.py
+```
+
+This smoke test uses a temporary Notebook and real CPU Jupyter Kernel. It
+requires the API to be running and the CPU image to be built. Never commit
+credentials, and do not treat GitHub CI (mocked Kernel execution) as a substitute
+for this test.

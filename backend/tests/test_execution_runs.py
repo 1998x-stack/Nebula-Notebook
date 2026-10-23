@@ -160,6 +160,18 @@ async def test_running_cancel_waits_for_kernel_result(clients, monkeypatch):
     assert (await getrun(clients, nb['id'], rid))['status'] == 'cancelled'
 
 
+async def test_active_run_blocks_notebook_delete_and_runtime_stop(clients, monkeypatch):
+    monkeypatch.setattr('app.main.schedule_run', lambda _: None)
+    h = await login(clients)
+    nb = await notebook(clients, h)
+    rid = (await submit(clients, h, nb['id'])).json()['run_id']
+    assert (await clients.delete(f"/api/notebooks/{nb['id']}", headers=h)).status_code == 409
+    assert (await clients.delete(f"/api/notebooks/{nb['id']}/runtime", headers=h)).status_code == 409
+    assert (await clients.post(f"/api/notebooks/{nb['id']}/runs/{rid}/cancel",
+                               headers=h)).json()['status'] == 'cancelled'
+    assert (await clients.delete(f"/api/notebooks/{nb['id']}", headers=h)).status_code == 200
+
+
 async def test_output_is_bounded():
     out = safe_output('display_data', {'data': {'image/png': 'a' * 200000}})
     assert out['data']['text/plain'].startswith('[Rich output omitted')
