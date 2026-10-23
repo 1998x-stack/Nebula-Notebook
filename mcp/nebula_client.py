@@ -709,86 +709,52 @@ class NebulaClient:
                 return i, cell
         raise NebulaError(f"Cell not found: {cell_id}")
 
+    async def cell_operation(self, notebook_id: str, *, action: str,
+                             expected_version: int | None = None,
+                             operation_id: str | None = None, **fields) -> dict:
+        """No hidden CAS rebasing. Reuse same version/id on uncertain retries."""
+        if expected_version is None:
+            expected_version = (await self.get_notebook(notebook_id))["version"]
+        if operation_id is None:
+            operation_id = uuid4().hex
+        return await self._json("POST", f"/api/notebooks/{notebook_id}/cell-operations",
+                                json={"operation_id": operation_id,
+                                      "expected_version": expected_version,
+                                      "action": action, **fields})
+
     async def add_cell(self, notebook_id: str, source: str = "", cell_type: str = "code",
-                       index: int | None = None, after_cell_id: str | None = None) -> dict:
-        box: dict[str, Any] = {}
-
-        def apply(doc: dict, _nb: dict) -> None:
-            cells = doc.setdefault("cells", [])
-            ids = {c.get("id") for c in cells}
-            if after_cell_id is not None:
-                at = self._cell_index(doc, after_cell_id) + 1
-            elif index is not None:
-                if index < 0:
-                    at = max(0, len(cells) + index)
-                else:
-                    at = min(index, len(cells))
-            else:
-                at = len(cells)
-            cell = make_cell(cell_type, source, existing_ids=ids)
-            cells.insert(at, cell)
-            box.update(cell_id=cell["id"], index=at)
-
-        _, version = await self.mutate(notebook_id, apply)
-        return {**box, "notebook_id": notebook_id, "version": version}
+                       index: int | None = None, after_cell_id: str | None = None,
+                       expected_version: int | None = None,
+                       operation_id: str | None = None) -> dict:
+        return await self.cell_operation(notebook_id, action="add",
+            source=source, cell_type=cell_type, index=index,
+            after_cell_id=after_cell_id, expected_version=expected_version,
+            operation_id=operation_id)
 
     async def update_cell(self, notebook_id: str, *, cell_id: str | None = None,
                           index: int | None = None, source: str | None = None,
-                          cell_type: str | None = None, expected_version: int | None = None) -> dict:
-        if source is None and cell_type is None:
-            raise NebulaError("Provide source and/or cell_type")
-        box: dict[str, Any] = {}
-
-        def apply(doc: dict, _nb: dict) -> None:
-            if expected_version is not None and _nb['version'] != expected_version:
-                raise Conflict(f'Notebook changed since v{expected_version}; current v{_nb["version"]}')
-            at = self._cell_index(doc, cell_id, index)
-            cell = doc["cells"][at]
-            if source is not None:
-                cell["source"] = source if isinstance(source, str) else text(source)
-            if cell_type is not None:
-                if cell_type not in ("code", "markdown", "raw"):
-                    raise NebulaError("cell_type must be code, markdown or raw")
-                cell["cell_type"] = cell_type
-                if cell_type == "code":
-                    cell.setdefault("outputs", [])
-                    cell.setdefault("execution_count", None)
-                else:
-                    cell.pop("outputs", None)
-                    cell.pop("execution_count", None)
-            box.update(cell_id=cell.get("id"), index=at, cell_type=cell["cell_type"])
-
-        _, version = await self.mutate(notebook_id, apply)
-        return {**box, "notebook_id": notebook_id, "version": version}
+                          cell_type: str | None = None,
+                          expected_version: int | None = None,
+                          operation_id: str | None = None) -> dict:
+        return await self.cell_operation(notebook_id, action="update",
+            cell_id=cell_id, index=index, source=source, cell_type=cell_type,
+            expected_version=expected_version, operation_id=operation_id)
 
     async def delete_cell(self, notebook_id: str, *, cell_id: str | None = None,
-                          index: int | None = None) -> dict:
-        box: dict[str, Any] = {}
+                          index: int | None = None,
+                          expected_version: int | None = None,
+                          operation_id: str | None = None) -> dict:
+        return await self.cell_operation(notebook_id, action="delete",
+            cell_id=cell_id, index=index, expected_version=expected_version,
+            operation_id=operation_id)
 
-        def apply(doc: dict, _nb: dict) -> None:
-            at = self._cell_index(doc, cell_id, index)
-            removed = doc["cells"].pop(at)
-            box.update(cell_id=removed.get("id"), index=at)
-
-        _, version = await self.mutate(notebook_id, apply)
-        return {**box, "notebook_id": notebook_id, "version": version}
-
-    async def move_cell(self, notebook_id: str, *, new_index: int, cell_id: str | None = None,
-                        index: int | None = None) -> dict:
-        box: dict[str, Any] = {}
-
-        def apply(doc: dict, _nb: dict) -> None:
-            cells = doc["cells"]
-            at = self._cell_index(doc, cell_id, index)
-            if not isinstance(new_index, int):
-                raise NebulaError("new_index must be an integer")
-            target = max(0, min(new_index, len(cells) - 1))
-            cell = cells.pop(at)
-            cells.insert(target, cell)
-            box.update(cell_id=cell.get("id"), from_index=at, index=target)
-
-        _, version = await self.mutate(notebook_id, apply)
-        return {**box, "notebook_id": notebook_id, "version": version}
+    async def move_cell(self, notebook_id: str, *, new_index: int,
+                        cell_id: str | None = None, index: int | None = None,
+                        expected_version: int | None = None,
+                        operation_id: str | None = None) -> dict:
+        return await self.cell_operation(notebook_id, action="move",
+            cell_id=cell_id, index=index, new_index=new_index,
+            expected_version=expected_version, operation_id=operation_id)
 
     async def get_cell(self, notebook_id: str, *, cell_id: str | None = None,
                        index: int | None = None, include_outputs: bool = False,
