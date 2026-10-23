@@ -56,7 +56,24 @@ class Notebook(Base):
     document_bytes: Mapped[int] = mapped_column(Integer, default=0)
     document: Mapped[dict] = mapped_column(JSON)
     version: Mapped[int] = mapped_column(Integer, default=1)
+    # Source lineage is informational; forks never share runtime/workspace or grants.
+    forked_from_notebook_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    forked_from_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class NotebookRevision(Base):
+    """Immutable snapshot of a committed notebook document version."""
+    __tablename__ = 'notebook_revisions'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    notebook_id: Mapped[str] = mapped_column(ForeignKey('notebooks.id'), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(200))
+    document: Mapped[dict] = mapped_column(JSON)
+    author_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    reason: Mapped[str] = mapped_column(String(20), default='save')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint('notebook_id', 'version', name='uq_notebook_revision'),)
 
 
 class NotebookPermission(Base):

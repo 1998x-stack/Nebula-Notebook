@@ -133,6 +133,8 @@ env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/you
 | `nebula_capabilities` | Docker / CPU / GPU 能力 |
 | `notebook_list` | 当前用户可见的 notebook（带 `folder_id`；可用 `folder_id` 过滤） |
 | `notebook_get` | 元数据 + 所有 cell（含源码、id、index） |
+| `notebook_versions` / `notebook_version` | 按权限读取已提交的不可变版本快照 |
+| `notebook_fork` | 从已有快照派生属于调用账号的私人 Notebook；不复制源 ACL/Kernel/工作文件 |
 | `notebook_create` | 新建 notebook；可带初始 cells 与 `folder_id` |
 | `notebook_create_file` | 在本地路径写一个真实 `.ipynb` 并导入；**本地父目录名会镜像成 Nebula 文件夹**（`projects/sklearn/01.ipynb` → 文件夹 `sklearn`），`folder=false` 可关闭、`folder="名字"` 可指定 |
 | `notebook_import` | 导入本地 `.ipynb` |
@@ -227,6 +229,25 @@ run_cancel(notebook_id, run_id)                   # request interrupt
 这是单进程 beta 的持久化任务记录，不是分布式队列，也不承诺 exactly-once
 Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_RUNS.md)。
 
+共享编辑同一个 Cell 时，Agent 可向 `cell_update` 提交 `expected_version`。
+若共享原件已更新就返回冲突；不传参则保持旧客户端自动重试行为。
+新增、删除、移动的 CAS 前置条件将在下一阶段扩展。
+
+### 多用户共享 Notebook 与自由 Fork
+
+每个 Pi/Claude/Codex/OpenCode Agent 使用不同注册用户的
+`NEBULA_EMAIL` / `NEBULA_PASSWORD`；不要共用管理员身份。
+共享 Notebook 是同一个原件、同一个 ID；被授权为 editor 的账号
+可共同修改，viewer 可读取与 Fork 历史；服务器仍会校验权限及
+乐观版本号，不会把并发编辑静默覆盖。
+
+`notebook_versions` → `notebook_version` → `notebook_fork`
+支持从任意**已保存**历史版本创建独立私人 Notebook。Fork 不继承
+原共享权限、Kernel RAM、数据文件、CUDA 资源和运行容器。
+原 owner 的私人文件夹 ID 不暴露给接收者。
+早期 Notebook 升级后只能回填当时的当前版本，不能重建从未存储过的历史。
+详情见 [共享协作架构](../docs/SHARED_COLLABORATION.md)。
+
 ## 5. 典型 agent 工作流
 
 ```text
@@ -304,7 +325,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **51 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **54 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -326,12 +347,15 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `notebook_create_file` | `path:str`, `title:str | null`, `cells:list[dict] | null`, `overwrite:bool`, `folder:str | null` | `title` = `null`<br>`cells` = `null`<br>`overwrite` = `False`<br>`folder` = `null` |
 | `notebook_delete` | `notebook_id:str` |  |
 | `notebook_export` | `notebook_id:str`, `path:str`, `overwrite:bool` | `overwrite` = `True` |
+| `notebook_fork` | `notebook_id:str`, `version:int`, `title:str | null`, `folder_id:str | null` | `title` = `null`<br>`folder_id` = `null` |
 | `notebook_get` | `notebook_id:str`, `include_outputs:bool`, `include_data:bool` | `include_outputs` = `False`<br>`include_data` = `False` |
 | `notebook_import` | `path:str`, `title:str | null` | `title` = `null` |
 | `notebook_list` | `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_move` | `notebook_id:str`, `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_rename` | `notebook_id:str`, `title:str` |  |
 | `notebook_run_cells` | `notebook_id:str`, `start:int`, `count:int`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `start` = `0`<br>`count` = `5`<br>`timeout` = `120`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
+| `notebook_version` | `notebook_id:str`, `version:int` |  |
+| `notebook_versions` | `notebook_id:str`, `limit:int`, `before:int | null` | `limit` = `50`<br>`before` = `null` |
 
 ### Cell 与执行
 
@@ -345,7 +369,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `cell_move` | `notebook_id:str`, `new_index:int`, `cell_id:str | null`, `index:int | null` | `cell_id` = `null`<br>`index` = `null` |
 | `cell_run` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `timeout:float`, `persist:bool`, `include_data:bool` | `cell_id` = `null`<br>`index` = `null`<br>`timeout` = `60`<br>`persist` = `True`<br>`include_data` = `False` |
 | `cell_run_all` | `notebook_id:str`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
-| `cell_update` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `source:str | null`, `cell_type:Literal['code', 'markdown', 'raw'] | None` | `cell_id` = `null`<br>`index` = `null`<br>`source` = `null`<br>`cell_type` = `null` |
+| `cell_update` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `source:str | null`, `cell_type:Literal['code', 'markdown', 'raw'] | None`, `expected_version:int | null` | `cell_id` = `null`<br>`index` = `null`<br>`source` = `null`<br>`cell_type` = `null`<br>`expected_version` = `null` |
 | `code_execute` | `notebook_id:str`, `code:str`, `timeout:float`, `persist:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `False`<br>`include_data` = `False` |
 | `run_cancel` | `notebook_id:str`, `run_id:str` |  |
 | `run_status` | `notebook_id:str`, `run_id:str` |  |

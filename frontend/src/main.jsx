@@ -137,7 +137,7 @@ function NotebookRow({item, onOpen, onMove}) {
       <span className="item-date">{item.updated_at?new Date(item.updated_at).toLocaleDateString():'—'}</span>
     </button>
     <span className="item-actions">
-      <button title="Move to folder" aria-label={`Move notebook ${item.title}`} onClick={()=>onMove(item)}><FolderInput size={13}/></button>
+      {onMove&&<button title="Move to folder" aria-label={`Move notebook ${item.title}`} onClick={()=>onMove(item)}><FolderInput size={13}/></button>}
     </span>
   </div>;
 }
@@ -155,7 +155,7 @@ function MoveDialog({item, folders, onClose, onMove}) {
   </div></Modal>;
 }
 
-function Dashboard({user, open, openFolder, goHome, folderId, logout}) {
+function Dashboard({user, open, openFolder, goHome, openShared, folderId, sharedOnly=false, logout}) {
  const [items,setItems] = useState([]); const [folders,setFolders]=useState([]); const [foldersLoaded,setFoldersLoaded]=useState(false);
  const [error,setError]=useState(''); const [search,setSearch]=useState('');
  const [newTitle,setNewTitle]=useState('Untitled notebook'); const [createOpen,setCreateOpen]=useState(false);
@@ -190,7 +190,7 @@ function Dashboard({user, open, openFolder, goHome, folderId, logout}) {
  useEffect(()=>{
    if(folderId&&foldersLoaded&&!folders.some(f=>f.id===folderId)){goHome()}
  },[folderId,folders,foldersLoaded,goHome]);
- const activeFolder = folders.find(f=>f.id===folderId)||null;
+ const activeFolder = !sharedOnly ? folders.find(f=>f.id===folderId)||null : null;
  const sizeByFolder = {};
  for(const n of items){ if(n.folder_id) sizeByFolder[n.folder_id]=(sizeByFolder[n.folder_id]||0)+(n.size_bytes||0); }
  async function create(){try{const n=await api('/notebooks',{method:'POST',body:JSON.stringify({title:newTitle,folder_id:folderId})}); setCreateOpen(false);open(n.id)}catch(e){setError(e.message)}}
@@ -203,29 +203,31 @@ function Dashboard({user, open, openFolder, goHome, folderId, logout}) {
  async function createUser(e){e.preventDefault();try{await api('/admin/users',{method:'POST',body:JSON.stringify(newUser)});setNewUser({email:'',password:'',is_admin:false});setUsers(await api('/admin/users'))}catch(e){setError(e.message)}}
  async function toggleUser(u){try{await api('/admin/users/'+u.id,{method:'PATCH',body:JSON.stringify({is_active:!u.is_active})});setUsers(await api('/admin/users'))}catch(e){setError(e.message)}}
  const term = search.trim().toLowerCase();
- const visibleFolders = folders
+ const visibleFolders = (sharedOnly?[]:folders)
    .map(f=>folderView(f,sizeByFolder))
    .filter(f=>!term||f.name.toLowerCase().includes(term));
- const notebooksInScope = items.filter(n=>folderId?n.folder_id===folderId:n.folder_id==null)
+ const notebooksInScope = items.filter(n=>sharedOnly?n.is_shared:(n.is_shared?false:(folderId?n.folder_id===folderId:n.folder_id==null)))
    .filter(n=>!term||n.title.toLowerCase().includes(term));
  const sortedFolders = sortItems(visibleFolders, sort);
  const sortedNotebooks = sortItems(notebooksInScope, sort);
- const rootCount = items.filter(n=>n.folder_id==null).length;
- const subtitle = activeFolder
+ const rootCount = items.filter(n=>!n.is_shared&&n.folder_id==null).length;
+ const sharedCount = items.filter(n=>n.is_shared).length;
+ const subtitle = sharedOnly ? 'Notebooks shared with your account; fork a saved version to work privately.' : activeFolder
    ? `${activeFolder.notebook_count} notebook${activeFolder.notebook_count===1?'':'s'} · ${formatSize(sizeByFolder[activeFolder.id]||0)}`
    : 'Create, experiment, and share interactive Python notebooks.';
 
  const folderGrid = <div className="notebook-grid folder-grid">{sortedFolders.map(f=><FolderCard key={f.id} folder={f} onOpen={openFolder} onRename={setRenaming} onDelete={deleteFolder}/>)}</div>;
  const folderList = <div className="item-list">{sortedFolders.map(f=><FolderRow key={f.id} folder={f} onOpen={openFolder} onRename={setRenaming} onDelete={deleteFolder}/>)}</div>;
- const notebookGrid = <div className="notebook-grid">{sortedNotebooks.map(n=><div key={n.id} className="nb-card" data-kind="notebook"><button className="nb-card-main" onClick={()=>open(n.id)} aria-label={`Open notebook ${n.title}`}><div className="nb-card-icon"><Code2 size={23}/></div><h3>{n.title}</h3><p>{n.cells ?? '—'} cells · {formatSize(n.size_bytes)}</p><div className="card-foot"><span className={'role '+n.role}>{n.role}</span><small>{n.updated_at?new Date(n.updated_at).toLocaleDateString():''}</small></div></button><div className="card-actions"><button title="Move to folder" aria-label={`Move notebook ${n.title}`} onClick={()=>setMoveTarget(n)}><FolderInput size={13}/></button></div></div>)}</div>;
- const notebookList = <div className="item-list">{sortedNotebooks.map(n=><NotebookRow key={n.id} item={n} onOpen={open} onMove={setMoveTarget}/>)}</div>;
+ const notebookGrid = <div className="notebook-grid">{sortedNotebooks.map(n=><div key={n.id} className="nb-card" data-kind="notebook"><button className="nb-card-main" onClick={()=>open(n.id)} aria-label={`Open notebook ${n.title}`}><div className="nb-card-icon"><Code2 size={23}/></div><h3>{n.title}</h3><p>{n.cells ?? '—'} cells · {formatSize(n.size_bytes)}</p><div className="card-foot"><span className={'role '+n.role}>{n.role}</span><small>{n.updated_at?new Date(n.updated_at).toLocaleDateString():''}</small></div></button>{!n.is_shared&&<div className="card-actions"><button title="Move to folder" aria-label={`Move notebook ${n.title}`} onClick={()=>setMoveTarget(n)}><FolderInput size={13}/></button></div>}</div>)}</div>;
+ const notebookList = <div className="item-list">{sortedNotebooks.map(n=><NotebookRow key={n.id} item={n} onOpen={open} onMove={n.is_shared?null:setMoveTarget}/>)}</div>;
 
  return <div className={'app-shell'+(navCollapsed?' nav-collapsed':'')}>
   <aside className="sidebar">
    <div className="brand"><span className="logo"><NotebookPen size={21}/></span><span>Nebula <strong>Notebook</strong></span>
      <button className="icon-btn nav-toggle" title={navCollapsed?'Expand sidebar':'Collapse sidebar'} aria-label={navCollapsed?'Expand sidebar':'Collapse sidebar'} aria-expanded={!navCollapsed} onClick={()=>setNavCollapsed(v=>!v)}>{navCollapsed?<PanelLeftOpen size={17}/>:<PanelLeftClose size={17}/>}</button></div>
    <div className="nav-scroll">
-    <button className={'nav-item'+(folderId===null?' active':'')} title="My notebooks" onClick={goHome}><BookOpen size={18}/> <span className="nav-text">My notebooks</span> <small className="nav-count">{rootCount}</small></button>
+    <button className={'nav-item'+(!sharedOnly&&folderId===null?' active':'')} title="My notebooks" onClick={goHome}><BookOpen size={18}/> <span className="nav-text">My notebooks</span> <small className="nav-count">{rootCount}</small></button>
+    <button className={'nav-item'+(sharedOnly?' active':'')} title="Shared with me" onClick={openShared}><Users size={18}/> <span className="nav-text">Shared with me</span> <small className="nav-count">{sharedCount}</small></button>
     <div className="nav-group"><small className="nav-label">FOLDERS</small>
       {folders.map(f=><button key={f.id} className={'nav-item'+(folderId===f.id?' active':'')} title={f.name} onClick={()=>openFolder(f.id)}><Folder size={17}/> <span className="nav-text">{f.name}</span> <small className="nav-count">{f.notebook_count}</small></button>)}
       {folders.length===0&&<small className="nav-empty">No folders yet</small>}
@@ -235,12 +237,12 @@ function Dashboard({user, open, openFolder, goHome, folderId, logout}) {
    <div className="nav-bottom"><div className="user-small"><div className="avatar">{user.email[0].toUpperCase()}</div><div><strong>{user.email.split('@')[0]}</strong><small>{user.is_admin?'Administrator':'Member'}</small></div></div>{user.is_admin&&<button className="nav-item" onClick={loadAdmin} title="Administration"><Shield size={18}/> <span className="nav-text">Administration</span></button>}<button className="nav-item" onClick={logout} title="Sign out"><LogOut size={18}/> <span className="nav-text">Sign out</span></button></div>
   </aside>
   <main className="dashboard">
-   <div className="dash-top"><div><small className="eyebrow">WORKSPACE</small><h1>{activeFolder?activeFolder.name:'Your notebooks'}<span className="dot">.</span></h1><p className="muted">{subtitle}</p></div>
+   <div className="dash-top"><div><small className="eyebrow">WORKSPACE</small><h1>{sharedOnly?'Shared with me':activeFolder?activeFolder.name:'Your notebooks'}<span className="dot">.</span></h1><p className="muted">{subtitle}</p></div>
    <div className="top-actions"><HeaderButton onClick={()=>fileRef.current?.click()}><Upload size={16}/> Import .ipynb</HeaderButton><HeaderButton onClick={()=>{setNewFolderName('');setFolderOpen(true)}}><FolderPlus size={16}/> New folder</HeaderButton><HeaderButton className="primary" onClick={()=>setCreateOpen(true)}><Plus size={17}/> New notebook</HeaderButton></div></div>
-   <nav className="breadcrumb" aria-label="Breadcrumb"><button onClick={goHome} className={activeFolder?'':'current'} aria-current={activeFolder?undefined:'page'}>My notebooks</button>{activeFolder&&<><span className="sep">/</span><span className="current" aria-current="page">{activeFolder.name}</span></>}</nav>
+   <nav className="breadcrumb" aria-label="Breadcrumb"><button onClick={goHome} className={activeFolder||sharedOnly?'':'current'} aria-current={activeFolder||sharedOnly?undefined:'page'}>My notebooks</button>{sharedOnly&&<><span className="sep">/</span><span className="current" aria-current="page">Shared with me</span></>}{activeFolder&&<><span className="sep">/</span><span className="current" aria-current="page">{activeFolder.name}</span></>}</nav>
    {error&&<div className="alert"><AlertCircle size={16}/>{error}<button onClick={()=>setError('')}>×</button></div>}
    <input type="file" accept=".ipynb,application/json" style={{display:'none'}} ref={fileRef} onChange={e=>importFile(e.target.files?.[0])}/>
-   <div className="section-heading"><h2>{activeFolder?'In this folder':'Recent notebooks'} <span>{sortedNotebooks.length + (folderId===null?sortedFolders.length:0)}</span></h2>
+   <div className="section-heading"><h2>{sharedOnly?'Shared notebooks':activeFolder?'In this folder':'Recent notebooks'} <span>{sortedNotebooks.length + (folderId===null?sortedFolders.length:0)}</span></h2>
      <div className="list-controls">
        <div className="search"><Search size={15}/><input placeholder="Search" value={search} onChange={e=>setSearch(e.target.value)}/></div>
        <label className="sort-control"><ArrowDownUp size={14}/><select value={sort} onChange={e=>setSort(e.target.value)} aria-label="Sort by">{SORT_OPTIONS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></label>
@@ -251,11 +253,9 @@ function Dashboard({user, open, openFolder, goHome, folderId, logout}) {
      </div>
    </div>
    {view==='list'&&(sortedFolders.length>0||sortedNotebooks.length>0)&&<div className="item-head" aria-hidden="true"><span className="item-icon"/><span className="item-name">Name</span><span className="item-meta">Contents</span><span className="item-size">Size</span><span className="item-date">Updated</span><span className="item-actions"/></div>}
-   {folderId===null&&sortedFolders.length>0&&(view==='grid'?folderGrid:folderList)}
+   {!sharedOnly&&folderId===null&&sortedFolders.length>0&&(view==='grid'?folderGrid:folderList)}
    {view==='grid'?notebookGrid:notebookList}
    {sortedFolders.length===0&&sortedNotebooks.length===0&&<p className="muted">Nothing here yet — create a notebook or a folder to get started.</p>}
-   {folderId===null&&<button className="new-card" onClick={()=>setCreateOpen(true)}><Plus size={26}/><strong>New notebook</strong><span>Start from scratch</span></button>}
-   {folderId!==null&&<button className="new-card" onClick={()=>{setNewTitle('Untitled notebook');setCreateOpen(true)}}><Plus size={26}/><strong>New notebook here</strong><span>Created inside “{activeFolder?.name}”</span></button>}
   </main>
   {createOpen&&<Modal title={activeFolder?`New notebook in “${activeFolder.name}”`:'Create notebook'} onClose={()=>setCreateOpen(false)}><div className="modal-body"><label>Notebook name<input value={newTitle} onChange={e=>setNewTitle(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')create()}} autoFocus/></label><div className="modal-actions"><HeaderButton onClick={()=>setCreateOpen(false)}>Cancel</HeaderButton><HeaderButton className="primary" onClick={create}>Create notebook</HeaderButton></div></div></Modal>}
   {folderOpen&&<Modal title="New folder" onClose={()=>setFolderOpen(false)}><form className="modal-body" onSubmit={createFolder}><label>Folder name<input value={newFolderName} onChange={e=>setNewFolderName(e.target.value)} placeholder="e.g. sklearn-tutorials" autoFocus/></label><p className="muted">Folders group your own notebooks and get their own URL (/folder/…). You can move notebooks in and out at any time, and deleting a folder never deletes its notebooks.</p><div className="modal-actions"><HeaderButton onClick={()=>setFolderOpen(false)}>Cancel</HeaderButton><HeaderButton className="primary" type="submit">Create folder</HeaderButton></div></form></Modal>}
@@ -313,6 +313,9 @@ function NotebookEditor({id,user,back,logout}) {
  const dirtyRef=useRef(false),lastExternalVersion=useRef(0);
  const canEdit = !!entry && entry.role!=='viewer';
  const [folderCrumb,setFolderCrumb]=useState(null);
+ const [historyOpen,setHistoryOpen]=useState(false),[historyRows,setHistoryRows]=useState([]),
+       [selectedVersion,setSelectedVersion]=useState(''),[forking,setForking]=useState(false),
+       [hasOlderHistory,setHasOlderHistory]=useState(false),[historyLoading,setHistoryLoading]=useState(false);
  function editDoc(fn){setDoc(prev=>{const next=typeof fn==='function'?fn(prev):fn;latestDoc.current=next;return next});revisions.current++;dirtyRef.current=true;setRevision(revisions.current);setDirty(true)}
  function updateCell(index,patch){editDoc(d=>({...d,cells:d.cells.map((c,i)=>i===index?{...c,...patch}:c)}))}
  const fetchRuntime=useCallback(async()=>{try{setRuntime(await api(`/notebooks/${id}/runtime`))}catch{}},[id]);
@@ -377,16 +380,50 @@ function NotebookEditor({id,user,back,logout}) {
    ws.send(JSON.stringify({channel:'shell',header:{msg_id:msgId,username:'nebula',session:randomId(),date:new Date().toISOString(),msg_type:'execute_request',version:'5.3'},parent_header:{},metadata:{},content:{code:sourceText(cell.source),silent:false,store_history:true,user_expressions:{},allow_stdin:false,stop_on_error:true},buffers:[]}));
  }
  async function runAll(){if(!doc)return;for(const c of doc.cells){if(c.cell_type==='code')run(c)} }
+ async function openHistory(){
+   setHistoryOpen(true);setError('');
+   try { const rows=await api(`/notebooks/${id}/versions?limit=100`);setHistoryRows(rows);setSelectedVersion(String(rows[0]?.version||''));setHasOlderHistory(rows.length===100&&rows[rows.length-1].version>1); }
+   catch(e){setError(e.message)}
+ }
+ async function loadOlderVersions(){
+   const oldest=historyRows[historyRows.length-1]?.version;
+   if(!oldest||oldest<=1||historyLoading)return;
+   setHistoryLoading(true);
+   try{
+     const older=await api(`/notebooks/${id}/versions?limit=100&before=${oldest}`);
+     setHistoryRows(previous=>[...previous,...older]);
+     setHasOlderHistory(older.length===100&&older[older.length-1].version>1);
+   }catch(e){setError(e.message)}finally{setHistoryLoading(false)}
+ }
+ async function forkVersion(){
+   if(!selectedVersion||forking)return;
+   setForking(true);
+   try{
+     const created=await api(`/notebooks/${id}/fork`,{method:'POST',body:JSON.stringify({version:Number(selectedVersion)})});
+     setHistoryOpen(false);
+     location.href='/notebook/'+encodeURIComponent(created.id);
+   }catch(e){setError(e.message)}finally{setForking(false)}
+ }
  async function exportNb(){try{if(dirty)await save();const res=await api(`/notebooks/${id}/export`);const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(title||'notebook').replace(/[^a-z\d_-]/gi,'_')+'.ipynb';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}catch(e){setError(e.message)}}
  async function deleteNb(){if(!confirm('Delete this notebook? Its persistent workspace files will be retained.'))return;try{await api(`/notebooks/${id}`,{method:'DELETE'});back()}catch(e){setError(e.message)}}
  if(!entry||!doc)return <div className="editor-loading"><NotebookPen size={28}/>{error||'Loading notebook...' }<button className="btn" onClick={back}>Back</button></div>;
- return <div className="editor-shell"><header className="editor-header"><div className="header-brand"><button className="logo compact" onClick={back} title="Back to notebooks"><NotebookPen size={19}/></button><div><input className="title-input" value={title} disabled={!canEdit} onChange={e=>changeTitle(e.target.value)} aria-label="Notebook title"/><div className="subtitle-small"><span className="bread" onClick={back}>My notebooks</span> / {folderCrumb?<><span className="bread" onClick={()=>{location.href='/folder/'+folderCrumb.id}}>{folderCrumb.name}</span> / </>:null}Python 3 <span className="bullet">·</span> <span className="save-state">{saving==='saving'?'Saving...':dirty?'Unsaved changes':'All changes saved'}</span></div></div></div><div className="head-buttons"><HeaderButton disabled={!canEdit} onClick={save} title="Save"><Save size={16}/> Save</HeaderButton><HeaderButton onClick={exportNb}><Download size={16}/> Export</HeaderButton>{canEdit&&<HeaderButton onClick={()=>setFilesOpen(true)}><FileText size={16}/> Files</HeaderButton>}{entry.role==='owner'&&<HeaderButton onClick={()=>setSharing(true)}><Users size={16}/> Share</HeaderButton>}<button className="avatar top-avatar" title={user.email} onClick={logout}>{user.email[0].toUpperCase()}</button></div></header>
+ return <div className="editor-shell"><header className="editor-header"><div className="header-brand"><button className="logo compact" onClick={back} title="Back to notebooks"><NotebookPen size={19}/></button><div><input className="title-input" value={title} disabled={!canEdit} onChange={e=>changeTitle(e.target.value)} aria-label="Notebook title"/><div className="subtitle-small"><span className="bread" onClick={back}>My notebooks</span> / {folderCrumb?<><span className="bread" onClick={()=>{location.href='/folder/'+folderCrumb.id}}>{folderCrumb.name}</span> / </>:null}Python 3 <span className="bullet">·</span> <span className="save-state">{saving==='saving'?'Saving...':dirty?'Unsaved changes':'All changes saved'}</span></div></div></div><div className="head-buttons"><HeaderButton disabled={!canEdit} onClick={save} title="Save"><Save size={16}/> Save</HeaderButton><HeaderButton onClick={exportNb}><Download size={16}/> Export</HeaderButton><HeaderButton onClick={openHistory} title="Browse saved versions or fork a private copy"><BookOpen size={16}/> History / Fork</HeaderButton>{canEdit&&<HeaderButton onClick={()=>setFilesOpen(true)}><FileText size={16}/> Files</HeaderButton>}{entry.role==='owner'&&<HeaderButton onClick={()=>setSharing(true)}><Users size={16}/> Share</HeaderButton>}<button className="avatar top-avatar" title={user.email} onClick={logout}>{user.email[0].toUpperCase()}</button></div></header>
  <div className="editor-toolbar"><div className="toolbar-main"><HeaderButton className="toolbar-primary" disabled={!canEdit} onClick={()=>add(doc.cells.length,'code')}><Plus size={16}/> Code</HeaderButton><HeaderButton disabled={!canEdit} onClick={()=>add(doc.cells.length,'markdown')}><FileText size={16}/> Text</HeaderButton><div className="sep"/><HeaderButton disabled={!canEdit||runtime.status!=='ready'||!channelReady} onClick={runAll}><Play size={16}/> Run all</HeaderButton><HeaderButton disabled={!canEdit||runtime.status!=='ready'} onClick={interrupt}><Square size={15}/> Interrupt</HeaderButton><span className="role-pill"><Shield size={14}/>{entry.role}</span></div><div className="runtime-controls"><span className={'runtime-indicator '+runtime.status}><span/>{runtime.status==='ready'?'Connected':runtime.status==='stopped'?'Disconnected':runtime.status}</span>{runtime.status==='ready'?<><span className="runtime-mode"><Cpu size={15}/> {runtime.mode?.toUpperCase()} {channelReady?"· Kernel ready":"· Kernel disconnected"}</span>{!channelReady&&<HeaderButton onClick={connectChannels}>Reconnect</HeaderButton>}<HeaderButton onClick={stop} disabled={!canEdit||busy}><CircleStop size={16}/> Disconnect</HeaderButton></>:<><select value={choice} onChange={e=>setChoice(e.target.value)} disabled={!canEdit||busy}><option value="cpu">CPU</option>{caps?.gpu_selectable&&<option value="gpu">GPU · {caps.gpu.name?.slice(0,23)}</option>}</select><HeaderButton className="primary" onClick={start} disabled={!canEdit||busy||!caps?.cpu}>{busy?'Connecting...':'Connect'} <Zap size={16}/></HeaderButton></>}</div></div>
  <div className="editor-layout"><main className="cells-panel"><div className="notebook-intro"><small className="eyebrow">INTERACTIVE NOTEBOOK</small><h1>{title}</h1><p>{canEdit?'Write code, explore results, and keep your research in one place.':'Read-only notebook. Contact the owner for editor permission.'}</p></div>{error&&<div className="alert"><AlertCircle size={16}/>{error}<button onClick={()=>setError('')}>×</button></div>}{notice&&<div className="notice"><Check size={15}/>{notice}<button onClick={()=>setNotice('')}>×</button></div>}
  {doc.cells.map((cell,i)=><EditorCell key={cell.id} cell={cell} index={i} canEdit={canEdit} update={updateCell} run={run} remove={remove} move={move} add={add} running={!!runningIds[cell.id]}/>)}
  {canEdit&&<div className="end-cell-actions"><HeaderButton onClick={()=>add(doc.cells.length,'code')}><Plus size={16}/> Code cell</HeaderButton><HeaderButton onClick={()=>add(doc.cells.length,'markdown')}><Plus size={16}/> Text cell</HeaderButton></div>}
  <div className="notebook-end">End of notebook <span>·</span> {doc.cells.length} cells</div></main>
  <aside className="details-panel"><div className="details-header"><Activity size={17}/> Environment</div><div className="detail-row"><span>Language</span><strong>Python 3</strong></div><div className="detail-row"><span>Status</span><strong>{runtime.status}</strong></div><div className="detail-row"><span>Compute</span><strong>{runtime.mode?.toUpperCase()||'None'}</strong></div><div className="detail-row"><span>Autosave</span><strong>Enabled</strong></div><div className="detail-row"><span>Cells</span><strong>{doc.cells.length}</strong></div><div className="detail-divider"/><div className="details-header"><Cpu size={17}/> GPU availability</div>{caps?.gpu_selectable?<div className="gpu-good"><Check size={15}/> {caps.gpu.name}</div>:<div className="gpu-off"><AlertCircle size={15}/> GPU not available<div className="gpu-hint">{caps?.gpu?.reason || 'Probing local runtime...'}</div></div>}{!caps?.cpu&&<div className="gpu-off">CPU image missing — build the runtime image first.</div>}<button className="small-link refresh" onClick={async()=>{try{const c=await api('/runtime/capabilities?refresh=true');setCaps(c)}catch(e){setError(e.message)}}}><RefreshCcw size={14}/> Refresh status</button><div className="detail-divider"/><div className="details-header"><Shield size={17}/> Permissions</div><p className="detail-help">{entry.role==='owner'?'You own this notebook and can manage sharing.':entry.role==='editor'?'You can edit and execute cells.':'You can view saved content only.'}</p>{entry.role==='owner'&&<HeaderButton className="danger small" onClick={deleteNb}><Trash2 size={15}/> Delete notebook</HeaderButton>}</aside></div>
+ {historyOpen&&<Modal title="Saved versions & private fork" onClose={()=>setHistoryOpen(false)}><div className="modal-body">
+   <p className="muted">Saved versions are immutable. Forking creates your own independent Notebook and does not copy runtime variables, workspace files, or collaborators.</p>
+   <label>Version to fork<select value={selectedVersion} onChange={e=>setSelectedVersion(e.target.value)}>
+     {historyRows.map(r=><option key={r.version} value={r.version}>v{r.version} · {r.reason} · {r.created_at?new Date(r.created_at).toLocaleString():'Saved snapshot'}</option>)}
+   </select></label>
+   {historyRows.length===0&&<p className="muted">No saved versions available.</p>}
+   {hasOlderHistory&&<HeaderButton onClick={loadOlderVersions} disabled={historyLoading}>{historyLoading?'Loading...':'Load older versions'}</HeaderButton>}
+   {error&&<div className="alert"><AlertCircle size={16}/>{error}</div>}
+   <div className="modal-actions"><HeaderButton onClick={()=>setHistoryOpen(false)}>Cancel</HeaderButton><HeaderButton className="primary" disabled={!selectedVersion||forking} onClick={forkVersion}>{forking?'Forking...':'Fork selected version'}</HeaderButton></div>
+ </div></Modal>}
  {sharing&&<ShareDialog id={id} onClose={()=>setSharing(false)}/>}
  {filesOpen&&<FilesDialog id={id} onClose={()=>setFilesOpen(false)}/>}</div>
 }
@@ -402,11 +439,13 @@ function idFromPath(prefix) {
 }
 // The URL is the single source of truth for "where am I": home / a folder / a notebook.
 function routeFromPath() {
+  if (location.pathname==='/shared') return {view:'shared',id:null};
   if (location.pathname.startsWith('/notebook/')) return {view:'notebook', id:idFromPath('notebook')};
   if (location.pathname.startsWith('/folder/')) return {view:'folder', id:idFromPath('folder')};
   return {view:'home', id:null};
 }
 function pathFor(route) {
+  if (route.view === 'shared') return '/shared';
   if (route.view === 'notebook' && route.id) return '/notebook/' + encodeURIComponent(route.id);
   if (route.view === 'folder' && route.id) return '/folder/' + encodeURIComponent(route.id);
   return '/';
@@ -419,7 +458,7 @@ function App(){
   useEffect(()=>{
     const sync=()=>{
       const next=routeFromPath();
-      if(location.pathname!=='/'&&!next.id){history.replaceState({},'','/');setRoute({view:'home',id:null});return}
+      if(location.pathname!=='/'&&!next.id&&next.view!=='shared'){history.replaceState({},'','/');setRoute({view:'home',id:null});return}
       setRoute(next);
     };
     window.addEventListener('popstate',sync);
@@ -433,6 +472,7 @@ function App(){
   },[]);
   const open=useCallback(id=>navigate({view:'notebook',id}),[navigate]);
   const openFolder=useCallback(id=>navigate({view:'folder',id}),[navigate]);
+ const openShared=useCallback(()=>navigate({view:'shared',id:null}),[navigate]);
   const home=useCallback(()=>{
     setRoute({view:'home',id:null});
     if(location.pathname!=='/') history.replaceState({view:'home',id:null},'','/');
@@ -443,6 +483,6 @@ function App(){
   if(route.view==='notebook'&&route.id) return <NotebookEditor key={route.id} id={route.id} user={user} back={home} logout={logout}/>;
   // No key: the dashboard keeps its state (view, sort, search, loaded folders)
   // while moving between the root and a folder.
-  return <Dashboard user={user} open={open} openFolder={openFolder} goHome={home} folderId={route.view==='folder'?route.id:null} logout={logout}/>;
+  return <Dashboard user={user} open={open} openFolder={openFolder} openShared={openShared} sharedOnly={route.view==='shared'} goHome={home} folderId={route.view==='folder'?route.id:null} logout={logout}/>;
 }
 createRoot(document.getElementById('root')).render(<App/>);

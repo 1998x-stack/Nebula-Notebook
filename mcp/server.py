@@ -164,6 +164,7 @@ async def nebula_capabilities(refresh: bool = False) -> dict:
 async def notebook_list(folder_id: str | None = None) -> list[dict]:
     """List notebooks visible to the configured user (id, title, role, folder_id, updated_at).
 
+    Shared rows carry ``is_shared=true`` and hide the owner's private folder.
     Rows carry ``folder_id`` (null = root level). Pass ``folder_id`` to list a
     single folder, or ``folder_id=""`` for the root only. See folder_list() for
     folder names with notebook counts.
@@ -193,6 +194,37 @@ async def notebook_get(notebook_id: str, include_outputs: bool = False,
         "updated_at": nb.get("updated_at"),
         "cells": cells,
     }
+
+
+@mcp.tool(annotations=READ)
+async def notebook_versions(notebook_id: str, limit: int = 50,
+                            before: int | None = None) -> list[dict]:
+    """List immutable committed versions visible to this MCP account.
+
+    Older installs are initially backfilled at their current version only.
+    To paginate, pass before=oldest_version_seen; Kernel memory is not snapshotted.
+    """
+    return await client.list_versions(notebook_id, limit=limit, before=before)
+
+
+@mcp.tool(annotations=READ)
+async def notebook_version(notebook_id: str, version: int) -> dict:
+    """Read a saved immutable notebook snapshot (viewer access is sufficient)."""
+    return await client.get_version(notebook_id, version)
+
+
+@mcp.tool(annotations=WRITE)
+async def notebook_fork(notebook_id: str, version: int,
+                        title: str | None = None, folder_id: str | None = None) -> dict:
+    """Make an independent, private fork of any accessible saved version.
+
+    Runtime, /workspace files, source ACL and live variables are never copied.
+    """
+    _require_write("notebook_fork")
+    nb = await client.fork_notebook(notebook_id, version, title, folder_id)
+    return {"id": nb["id"], "title": nb["title"], "version": nb["version"],
+            "role": nb["role"], "forked_from_notebook_id": nb.get("forked_from_notebook_id"),
+            "forked_from_version": nb.get("forked_from_version")}
 
 
 @mcp.tool(annotations=WRITE)
@@ -363,12 +395,14 @@ async def cell_insert(notebook_id: str, source: str = "",
 @mcp.tool(annotations=WRITE)
 async def cell_update(notebook_id: str, cell_id: str | None = None,
                       index: int | None = None, source: str | None = None,
-                      cell_type: Literal["code", "markdown", "raw"] | None = None) -> dict:
+                      cell_type: Literal["code", "markdown", "raw"] | None = None,
+                      expected_version: int | None = None) -> dict:
     """Update a cell's source and/or type (changing type keeps the document valid)."""
     _require_write("cell_update")
     return await client.update_cell(
         notebook_id, cell_id=cell_id, index=index,
-        source=source, cell_type=cell_type)
+        source=source, cell_type=cell_type,
+        expected_version=expected_version)
 
 
 @mcp.tool(annotations=DESTRUCTIVE)

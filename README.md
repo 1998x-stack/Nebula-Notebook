@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)](backend/requirements.txt)
 [![Status: Beta](https://img.shields.io/badge/status-beta-orange)](SECURITY.md)
 
-**Nebula Notebook is an open-source, agent-native Jupyter notebook workspace: use its web editor or MCP tools from coding agents such as Pi, OpenCode, Claude and Codex.** It is independently developed and inspired by interactive notebook workflows such as Google Colab and Jupyter. Run `.ipynb` notebooks in your browser with a React editor, a real IPython kernel, Docker-managed CPU runtimes, and optional NVIDIA GPU execution verified inside the container. Notebook sharing uses owner, editor, and viewer roles.
+**An agent-native computational notebook where humans and AI agents can build, execute, observe, and reproduce research together.** Nebula Notebook is an open-source, self-hosted Jupyter notebook workspace for humans and coding agents including Pi, OpenCode, Claude and Codex. It is independently developed and inspired by interactive notebook workflows such as Google Colab and Jupyter. Run `.ipynb` notebooks in your browser with a React editor, a real IPython kernel, Docker-managed CPU runtimes, and optional NVIDIA GPU execution verified inside the container. Notebook sharing uses owner, editor, and viewer roles.
 
 **[中文文档](README.zh-CN.md)** · **[Quick start](#quick-start)** · **[Architecture](docs/ARCHITECTURE.md)** · **[Deployment](docs/DEPLOYMENT.md)** · **[FAQ](docs/FAQ.md)** · **[Security](SECURITY.md)** · **[Contributing](CONTRIBUTING.md)**
 
@@ -25,11 +25,43 @@ Nebula Notebook is a web-based Python notebook server that lets you create, run,
 | CPU sessions | Per-notebook Docker runtime with resource limits | Implemented; host smoke test required |
 | NVIDIA GPU | Optional CUDA image and PyTorch-in-container availability probe | Implemented; requires supported host |
 | Access control | Admin, notebook owner, editor, viewer | Implemented |
-| Save and share | SQLite documents, versioned writes, `.ipynb` import/export | Implemented |
+| Shared notebooks | Registered users collaborate on one Notebook using owner/editor/viewer roles; "Shared with me" view | Implemented for trusted teams |
+| Immutable versions & private forks | Saved revisions, history browsing, fork an available version to private ownership | Implemented; pre-upgrade versions cannot be recovered |
+| Save & export | Compare-and-swap SQLite document saves, `.ipynb` import/export | Implemented |
 | Workspace files | Upload/download/delete with guarded flat filenames | Implemented |
-| Agent integration (MCP) | 46-tool stdio MCP server for Pi, Claude, Codex and OpenCode | Implemented |
+| Agent integration (MCP) | 54-tool stdio MCP server for Pi, Claude, Codex and OpenCode | Implemented |
 | Single-host operations | Ubuntu doctor, launch, smoke scripts and CI | Implemented |
 | Multi-node scheduling / live co-editing / SSO | Not in v0.1 | Roadmap |
+
+### Shared research workspaces and independent versioned forks
+
+Nebula supports **one canonical Notebook shared with several registered users**.
+A creator can grant viewer or editor access by email. Each user — and each
+user's Pi, Claude, OpenCode or Codex agent — authenticates with their **own
+Nebula account**, so all actions pass the same API/Kernel RBAC checks.
+
+- **Personal workspace:** Your own notebooks and folders; new notebooks start
+  private. The dashboard has a single **New notebook** button.
+- **Shared with me:** Notebooks owned by others and shared with your account.
+  The owner's private folder ID is never shown to collaborators.
+- **Shared original:** Editors change the same document ID. Concurrent writes
+  require the expected version and return HTTP 409 instead of overwriting.
+  Shared editor execution uses the source notebook's common Kernel/workspace.
+- **Private fork:** A reader, editor or owner can select an *available saved
+  version* and create an independent Notebook with a new ID, personal history,
+  separate runtime/workspace and **no inherited grants**. Code/output are
+  copied, but not RAM or dataset files. Revoking source access does not erase
+  already-created independent forks.
+- **Immutable history:** Each successful save or managed job's committed output
+  creates a version snapshot. When upgrading an older installation, only its
+  current state can be backfilled; no unknown historical content is invented.
+
+The frontend exposes **History / Fork** and the same operations are available
+through MCP: `notebook_versions`, `notebook_version`, `notebook_fork`.
+This is **versioned collaboration**, not conflict-free simultaneous co-typing,
+automatic branching/merging or a public multi-tenant execution sandbox.
+
+**[Data model, permission matrix, collaboration trade-offs and rollout design →](docs/SHARED_COLLABORATION.md)**
 
 ### System architecture
 
@@ -96,6 +128,7 @@ Proposed visual assets (intentionally shown as text until screenshots exist; no 
 | Visual | Suggested filename | What it should show |
 | --- | --- | --- |
 | Notebook editor | `docs/assets/notebook-editor.webp` | Code + Markdown + inline plot in the browser |
+| Shared research | `docs/assets/shared-notebooks.webp` | Sidebar Shared with me, collaborator roles and History / Fork dialog |
 | Agent workflow | `docs/assets/agent-live-sync.gif` | **Planned:** agent creates/moves/runs cells and UI updates |
 | Variable inspector | `docs/assets/variables-inspector.webp` | Variable names, shapes and types without huge values |
 | Autoresearch trials | `docs/assets/research-results.webp` | **Planned:** trial metric comparison and provenance |
@@ -119,11 +152,11 @@ not exactly-once Python execution. See [Execution runs](docs/EXECUTION_RUNS.md).
 
 ### Use Nebula from an LLM agent (MCP)
 
-`mcp/` exposes the notebook API as a stdio MCP server with **51 tools and 2 resources**: create/import/export notebooks, organise them into folders, insert/update/delete/move cells, run cells and save outputs, `code_execute`, runtime start/stop/interrupt/diagnostics, workspace read/write at any depth, sharing and admin operations. It authenticates through the normal session/CSRF/RBAC API, so it does not add a new trust boundary.
+`mcp/` exposes the notebook API as a stdio MCP server with **54 tools and 2 resources**: create/import/export notebooks, organise them into folders, insert/update/delete/move cells, run cells and save outputs, `code_execute`, runtime start/stop/interrupt/diagnostics, workspace read/write at any depth, sharing and admin operations. It authenticates through the normal session/CSRF/RBAC API, so it does not add a new trust boundary.
 
 ```bash
 ./mcp/install-pi.sh      # register in ~/.pi/agent/mcp.json
-pi mcp list              # connected, 51 tools
+pi mcp list              # connected, 54 tools
 # Claude Desktop, Codex CLI and OpenCode configs: mcp/README.md
 mcp/.venv/bin/python mcp/test_mcp.py
 ```
@@ -159,7 +192,7 @@ For a fresh install, use [Deployment guide](docs/DEPLOYMENT.md), [FAQ](docs/FAQ.
 | Compute | Your Docker host, CPU + optional NVIDIA GPU | Google-managed runtimes, eligibility-dependent accelerators | Configurable server/kernel infrastructure |
 | File format | Jupyter `.ipynb` | Jupyter `.ipynb` | Jupyter `.ipynb` |
 | Team permissions | Admin + owner/editor/viewer | Platform-specific sharing | Depends on deployment and add-ons |
-| Agent integration | MCP stdio server with 51 tools | Product-integrated AI features | MCP / extensions |
+| Agent integration | MCP stdio server with 54 tools | Product-integrated AI features | MCP / extensions |
 | General-purpose multi-tenant safety | Not production-hardened | Managed by provider | Depends on deployment |
 
 Nebula Notebook is an **independent project**, not affiliated with or endorsed by Google or Project Jupyter. “Colab” and “Jupyter” are trademarks of their respective owners. [Read a more detailed comparison →](docs/COMPARISON.md).

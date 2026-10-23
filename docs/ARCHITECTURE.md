@@ -52,7 +52,7 @@ Administrator has broad access to all notebooks. This is a policy decision, and 
 
 ## MCP adapter
 
-`mcp/` exposes notebook CRUD, cell editing/insertion, execution, runtime control, workspace files, folders, sharing and administration as 46 MCP tools plus two resources (`nebula://notebooks`, `nebula://notebooks/{id}`). Agents can create a real `.ipynb` at a local path and import it, or work directly on a notebook by id. Outputs returned by the kernel are normalized to the nbformat schema before being saved, so Jupyter-only fields such as `transient` never reach persistence. The adapter is tested with the MCP Python client and with Pi (`pi mcp list`); see `mcp/README.md` for the per-interface reference.
+`mcp/` exposes notebook CRUD, cell editing/insertion, execution, runtime control, workspace files, folders, sharing and administration as 54 MCP tools plus two resources (`nebula://notebooks`, `nebula://notebooks/{id}`). Agents can create a real `.ipynb` at a local path and import it, or work directly on a notebook by id. Outputs returned by the kernel are normalized to the nbformat schema before being saved, so Jupyter-only fields such as `transient` never reach persistence. The adapter is tested with the MCP Python client and with Pi (`pi mcp list`); see `mcp/README.md` for the per-interface reference.
 
 ## Notebook and folder URLs
 
@@ -67,3 +67,12 @@ Administrator has broad access to all notebooks. This is a policy decision, and 
 - Execution queue and telemetry, idle shutdown, GPU fairness, observability and audit retention.
 - Kernel comm/widget support, stdin, debugger, collaborators and CRDT.
 - Agent plan/approval gates; policy-scoped code execution with tool provenance.
+
+## Versioned multi-account sharing (beta)
+
+See [Shared Collaboration](SHARED_COLLABORATION.md). A Notebook represents
+one shared canonical document with per-user ACL, while immutable snapshots
+permit independent private forks from available saved versions. Shared editor
+access includes Python execution on the original Notebook runtime/filesystem;
+sharing is restricted to trusted collaborators. Private folder IDs are never
+exposed to recipients. This is not live CRDT collaboration.
