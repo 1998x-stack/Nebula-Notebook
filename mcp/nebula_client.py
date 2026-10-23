@@ -151,6 +151,10 @@ def summarize_cell(cell: dict, index: int, include_outputs: bool = False,
                    include_data: bool = False) -> dict:
     item = {
         "index": index,
+        # `cell_id`/`cell_type` are the names every other cell tool accepts and
+        # returns; `id`/`type` are kept as aliases for earlier clients.
+        "cell_id": cell.get("id"),
+        "cell_type": cell.get("cell_type"),
         "id": cell.get("id"),
         "type": cell.get("cell_type"),
         "source": text(cell.get("source")),
@@ -872,7 +876,7 @@ class NebulaClient:
                 "outputs": summarize_outputs(result["outputs"], include_data=include_data),
             }
             results.append((item, cid, result))
-            if stop_on_error and result["status"] not in ("ok", "timeout"):
+            if stop_on_error and result["status"] != "ok":
                 break
         saved_version = None
         if persist:
@@ -965,7 +969,7 @@ class NebulaClient:
                 "_raw": result["outputs"],
                 "_exec": result["execution_count"],
             })
-            if stop_on_error and result["status"] not in ("ok", "timeout"):
+            if stop_on_error and result["status"] != "ok":
                 break
 
         saved_version = None
@@ -977,8 +981,8 @@ class NebulaClient:
                         _, target = self._cell(current["document"], item["cell_id"])
                     except NebulaError:
                         continue
-                    target["outputs"] = item.pop("_raw")
-                    target["execution_count"] = item.pop("_exec")
+                    target["outputs"] = item["_raw"]
+                    target["execution_count"] = item["_exec"]
                 try:
                     saved = await self.save_notebook(
                         notebook_id, current["title"], current["version"], current["document"])
@@ -994,7 +998,7 @@ class NebulaClient:
 
         ran_to = results[-1]["code_ordinal"] + 1 if results else begin
         interrupted = bool(stop_on_error and results
-                           and results[-1]["status"] not in ("ok", "timeout"))
+                           and results[-1]["status"] != "ok")
         return {
             "notebook_id": notebook_id,
             "total_code_cells": total,

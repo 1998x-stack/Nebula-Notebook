@@ -148,7 +148,7 @@ env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/you
 
 | Tool | 作用 |
 |---|---|
-| `cell_list` | 列出 cell（index/id/type/source） |
+| `cell_list` | 列出 cell（`index`/`cell_id`/`cell_type`/`source`；保留 `id`/`type` 别名） |
 | `cell_get` | 读取单个 cell，可带输出 |
 | `cell_add` | 新增 cell；`index` / `after_cell_id` 控制插入位置 |
 | `cell_insert` | `cell_add` 的别名，语义更直观 |
@@ -160,6 +160,10 @@ env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/you
 | `notebook_run_cells` | **分批/可续跑**运行一段 code cell 窗口（`start`/`count` → `next_start`），长 notebook 不会撞客户端超时 |
 | `code_execute` | 不建 cell 直接执行代码；变量在 kernel 中保留；可 `persist=true` 追加为 cell |
 
+### Kernel 变量与执行观察
+
+`kernel_variables(notebook_id, names=null, limit=80)` 读取**已连接 Python Kernel**的变量元数据（名称、类型、部分 shape/dtype/device 和少量标量预览），不会自动启动 Runtime，也不会保存 Cell。它是 **EXECUTE** 类工具，因为通过 Kernel 执行固定检查代码；只读 MCP 模式禁用它。请勿用它获取机密数据。R/C++ kernel 暂不支持这一 Python 专用工具。
+
 ### Runtime / workspace / 权限
 
 | Tool | 作用 |
@@ -168,12 +172,13 @@ env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/you
 | `runtime_diagnose` | **内核侧环境体检**：包版本、matplotlib 后端与 inline 依赖、CJK 字体、`/workspace` 真实目录树、env |
 | `runtime_quota` | 列出每个 notebook 是否正持有 runtime（429 配额排查用） |
 | `kernel_interrupt` | 中断当前执行 |
+| `kernel_variables` | `notebook_id:str`, `names:list[str] | None`, `limit:int`, `timeout:float` | `names` = `null`<br>`limit` = `80`<br>`timeout` = `20` |
 | `workspace_list` | 列文件；`recursive=true` 走内核，能看到**子目录** |
 | `workspace_write` | 往 `/workspace` 的**任意相对深度**写文件（自动建父目录） |
 | `workspace_read` | 读任意深度文件（文本或 base64），走内核 |
 | `workspace_upload` / `workspace_download` / `workspace_delete` | 走 REST 的**扁平**文件操作（仅根目录简单文件名） |
 | `share_list` / `share_add` / `share_remove` | owner 分享 viewer/editor |
-| `user_list` / `user_create` / `user_set_active` / `audit_list` | 管理员工具 |
+| `user_list` / `user_create` / `user_set_active` / `audit_list` | 管理员工具；`user_create`/`user_set_active` 都返回用户对象（后者停用时同时失效该用户会话） |
 
 ### 文件夹（dashboard 的分组层）
 
@@ -235,6 +240,8 @@ MCP resources（支持 resources 的客户端可浏览）：
 | `NEBULA_MCP_LOG_LEVEL` | `WARNING` | 日志写 stderr，不污染 MCP stdout |
 | `NEBULA_PIP_INDEX_URL` | 空 | `run.sh` 首次安装依赖时可用的镜像 |
 
+注意：`runtime_diagnose`、`workspace_read`、`workspace_list(recursive=true)` 会在 Kernel 中执行 Python，不能当成无副作用的只读操作；`NEBULA_MCP_READONLY` 模式下这些操作受限。
+
 ## 7. 安全模型
 
 - MCP server 是一个**本地可信进程**，持有 Nebula 会话 cookie。stdio 只在本机客户端与 server 之间。
@@ -273,7 +280,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **46 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **47 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -351,7 +358,12 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `user_list` | — |  |
 | `user_set_active` | `user_id:str`, `is_active:bool` |  |
 
-每个工具的返回值都是 JSON 对象；执行类工具返回 `outputs`（stream / error / `data_keys`），
-大图默认只给摘要，需要原始 MIME 时传 `include_data=true`。参数含义见各工具 docstring（`mcp/server.py`）。
+返回值约定：
+
+- 返回对象的工具：`structuredContent` 就是该对象。
+- 返回列表的工具（如 `notebook_list`、`cell_list`、`user_list`）：`structuredContent` 形如 `{"result": [...]}`，只有文本通道的客户端会按元素拆成多个 content block —— 客户端应优先读 `structuredContent`。
+- 执行类工具返回 `outputs`（stream / error / `data_keys`）；大图默认只给摘要，需要原始 MIME 时传 `include_data=true`。
+
+参数含义见各工具 docstring（`mcp/server.py`）。
 
 <!-- END GENERATED TOOL REFERENCE -->

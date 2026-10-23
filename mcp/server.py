@@ -23,6 +23,8 @@ from pydantic import BaseModel
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from variable_probe import build_variable_probe, parse_variable_probe
+
 from nebula_client import (
     NebulaClient,
     NebulaError,
@@ -97,8 +99,10 @@ Recommended workflow:
    notebooks hold a session and runtime_stop() the ones you no longer need.
 
 Notebook ids are UUIDs. Cell indexes are 0-based. Cell sources are strings.
-The API stores notebooks in one flat list (Nebula v0.1 has no folders); use
-titles to identify them. Python code execution can modify the notebook workspace,
+The API has single-level personal folders. Use folder_list/folder_ensure and
+folder_id to organise notebooks. kernel_variables inspects only existing Python
+runtime variables; it does not implicitly start a stopped kernel.
+Python code execution can modify the notebook workspace,
 so treat run/execute and destructive tools as trusted local operations.
 """
 
@@ -445,7 +449,7 @@ async def notebook_run_cells(notebook_id: str, start: int = 0,
         stop_on_error=stop_on_error, include_data=include_data))
 
 
-@mcp.tool(annotations=READ)
+@mcp.tool(annotations=EXECUTE)
 async def runtime_diagnose(notebook_id: str, timeout: float = 60) -> dict:
     """Report the runtime environment from inside the kernel.
 
@@ -454,6 +458,7 @@ async def runtime_diagnose(notebook_id: str, timeout: float = 60) -> dict:
     CJK font availability (Chinese labels), relevant env vars, and the real
     (possibly nested) /workspace tree. Starts the runtime if it is not running.
     """
+    _require_write("runtime_diagnose")
     return await _with_hints(client.diagnose(notebook_id, timeout=timeout))
 
 
@@ -479,6 +484,28 @@ async def code_execute(notebook_id: str, code: str, timeout: float = 60,
     return await _with_hints(client.execute_code(
         notebook_id, code, timeout=timeout, persist=persist,
         include_data=include_data))
+
+
+@mcp.tool(annotations=EXECUTE)
+async def kernel_variables(notebook_id: str, names: list[str] | None = None,
+                           limit: int = 80, timeout: float = 20) -> dict:
+    """Inspect bounded metadata of live Python variables, without saving a Cell.
+
+    This executes a fixed Python probe in the existing runtime, so execution
+    permission is required and the tool is deliberately NOT marked read-only.
+    It never starts a stopped runtime, exports tensor contents, or serializes
+    whole dataframes. Use names=["df"] for targeted inspection.
+    """
+    _require_write("kernel_variables")
+    status = await client.runtime_status(notebook_id)
+    if status.get("status") != "ready":
+        raise NebulaError("Start the Python runtime before inspecting variables")
+    try:
+        result = await client.execute(notebook_id, build_variable_probe(names, limit),
+                                      timeout=timeout)
+        return {"notebook_id": notebook_id, **parse_variable_probe(result)}
+    except ValueError as exc:
+        raise NebulaError(str(exc)) from exc
 
 
 @mcp.tool(annotations=WRITE)
@@ -513,7 +540,7 @@ async def kernel_interrupt(notebook_id: str) -> dict:
 # Workspace files
 # --------------------------------------------------------------------------
 
-@mcp.tool(annotations=READ)
+@mcp.tool(annotations=EXECUTE)
 async def workspace_list(notebook_id: str, recursive: bool = False) -> list[dict]:
     """List files in the notebook's persistent /workspace directory.
 
@@ -523,6 +550,8 @@ async def workspace_list(notebook_id: str, recursive: bool = False) -> list[dict
     subdirectories created by Python code (e.g. /workspace/sklearn-tutorials/…).
     Requires a runtime (it is started on demand).
     """
+    if recursive:
+        _require_write("workspace_list(recursive=true)")
     return await _with_hints(client.list_workspace(notebook_id, recursive=recursive))
 
 
@@ -544,7 +573,7 @@ async def workspace_write(notebook_id: str, path: str,
         notebook_id, path, content=content, local_path=local_path, timeout=timeout))
 
 
-@mcp.tool(annotations=READ)
+@mcp.tool(annotations=EXECUTE)
 async def workspace_read(notebook_id: str, path: str, max_chars: int = 20000,
                          timeout: float = 60) -> dict:
     """Read any file under /workspace (including nested paths) through the kernel.
@@ -552,6 +581,7 @@ async def workspace_read(notebook_id: str, path: str, max_chars: int = 20000,
     Text files are returned as text (truncated to max_chars); binary files are
     returned as base64.
     """
+    _require_write("workspace_read")  # Nested file read runs Python in the kernel.
     data = await _with_hints(client.read_workspace(
         notebook_id, path, timeout=timeout))
     try:
@@ -637,9 +667,15 @@ async def user_create(email: str, password: str, is_admin: bool = False) -> dict
 
 @mcp.tool(annotations=DESTRUCTIVE)
 async def user_set_active(user_id: str, is_active: bool) -> dict:
-    """Activate/deactivate a user and invalidate their sessions when disabling (admin only)."""
+    """Activate/deactivate a user and invalidate their sessions when disabling (admin only).
+
+    Returns the updated user record, so callers can confirm the new state instead of
+    trusting an opaque {"ok": true}.
+    """
     _require_write("user_set_active")
-    return await client.set_user_active(user_id, is_active)
+    await client.set_user_active(user_id, is_active)
+    users = await client.list_users()
+    return next((u for u in users if u.get("id") == user_id), {"id": user_id, "is_active": is_active})
 
 
 @mcp.tool(annotations=READ)

@@ -89,16 +89,29 @@ docker build -f docker/runtime.gpu.Dockerfile -t nebula-runtime:gpu .
 
 The GPU option is enabled only if the server can start the GPU Docker image and execute `torch.cuda.is_available() == True`. GPU hardware in the **browser/client** does not count. If GPU verification fails, the CPU path remains available. [GPU troubleshooting →](docs/DEPLOYMENT.md#gpu-setup-and-verification)
 
+### Screenshots and demo (contributions welcome)
+
+<!-- SCREENSHOT TODO (do not add broken links before assets exist):
+1. docs/assets/notebook-editor.png — Desktop notebook editor with code, Markdown and chart output; alt="Nebula Notebook web editor running Python cells"
+2. docs/assets/agent-live-sync.gif — Pi agent adds, moves and runs cells while browser renders changes; alt="Agent-driven notebook execution and live output"
+3. docs/assets/variables-inspector.png — MCP kernel variable metadata (type, shape, dtype, device); alt="MCP notebook variable inspector"
+4. docs/assets/research-results.png — Reproducible experiment comparison and metric chart; alt="Notebook autoresearch experiment tracking"
+Capture at 1440x900 or similar; use anonymized demo notebooks. Optimize screenshots (<300 KB WebP where possible); 8–15s GIF may be converted to MP4 for documentation performance.
+These illustrate current and proposed features; do not depict proposed features as shipped.
+-->
+
 ### Use Nebula from an LLM agent (MCP)
 
-`mcp/` exposes the notebook API as a stdio MCP server with **46 tools and 2 resources**: create/import/export notebooks, organise them into folders, insert/update/delete/move cells, run cells and save outputs, `code_execute`, runtime start/stop/interrupt/diagnostics, workspace read/write at any depth, sharing and admin operations. It authenticates through the normal session/CSRF/RBAC API, so it does not add a new trust boundary.
+`mcp/` exposes the notebook API as a stdio MCP server with **47 tools and 2 resources**: create/import/export notebooks, organise them into folders, insert/update/delete/move cells, run cells and save outputs, `code_execute`, runtime start/stop/interrupt/diagnostics, workspace read/write at any depth, sharing and admin operations. It authenticates through the normal session/CSRF/RBAC API, so it does not add a new trust boundary.
 
 ```bash
 ./mcp/install-pi.sh      # register in ~/.pi/agent/mcp.json
-pi mcp list              # connected, 46 tools
+pi mcp list              # connected, 47 tools
 # Claude Desktop, Codex CLI and OpenCode configs: mcp/README.md
 mcp/.venv/bin/python mcp/test_mcp.py
 ```
+
+Agent-facing extensions include `kernel_variables` (bounded metadata-only inspection of live Python objects); this requires execution permission and does not auto-start a runtime. For a practical workflow, see [Agent setup for Pi, OpenCode, Claude and Codex](docs/AGENT_SETUP.md), the [autoresearch prompt](examples/autoresearch-prompt.txt), [Agent-native roadmap](docs/AGENT_NATIVE_ROADMAP.md), and [multi-kernel design](docs/MULTI_KERNEL.md).
 
 The MCP server is intended for a trusted local agent. Code execution is arbitrary Python in the notebook container; use a dedicated user and keep the API on localhost or a private tunnel. See **[mcp/README.md](mcp/README.md)** for the full tool catalog, workflows, environment variables and security model.
 
@@ -129,7 +142,7 @@ For a fresh install, use [Deployment guide](docs/DEPLOYMENT.md), [FAQ](docs/FAQ.
 | Compute | Your Docker host, CPU + optional NVIDIA GPU | Google-managed runtimes, eligibility-dependent accelerators | Configurable server/kernel infrastructure |
 | File format | Jupyter `.ipynb` | Jupyter `.ipynb` | Jupyter `.ipynb` |
 | Team permissions | Admin + owner/editor/viewer | Platform-specific sharing | Depends on deployment and add-ons |
-| Agent integration | MCP stdio server with 46 tools | Product-integrated AI features | MCP / extensions |
+| Agent integration | MCP stdio server with 47 tools | Product-integrated AI features | MCP / extensions |
 | General-purpose multi-tenant safety | Not production-hardened | Managed by provider | Depends on deployment |
 
 Nebula Notebook is an **independent project**, not affiliated with or endorsed by Google or Project Jupyter. “Colab” and “Jupyter” are trademarks of their respective owners. [Read a more detailed comparison →](docs/COMPARISON.md).
