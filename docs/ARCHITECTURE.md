@@ -76,3 +76,18 @@ permit independent private forks from available saved versions. Shared editor
 access includes Python execution on the original Notebook runtime/filesystem;
 sharing is restricted to trusted collaborators. Private folder IDs are never
 exposed to recipients. This is not live CRDT collaboration.
+
+
+## P0-B durable Notebook event journal
+
+Saved document changes atomically append `notebook_events` with a globally
+monotonic event ID, Notebook ACL scope, actor, document version and bounded
+Cell delta; large changes require one authoritative document reload. The
+`/api/notebooks/{id}/events` SSE endpoint resumes from `Last-Event-ID` or
+`after=` on reconnect and rechecks login, active-user status and Notebook
+permission each polling cycle. Managed Kernel runs emit `run.queued`,
+`run.started`, bounded `run.output`, `run.cancelling` and `run.finished`
+events. A closed/hidden editor releases the SSE connection; its fallback
+version probe remains available. Journal records are currently full retention:
+backups, tenant quotas, pruning with explicit cursor reset, and performance
+benchmarks are required before hosted multi-tenant deployment.

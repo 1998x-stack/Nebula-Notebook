@@ -31,7 +31,9 @@ Nebula Notebook is a web-based Python notebook server that lets you create, run,
 | Workspace files | Upload/download/delete with guarded flat filenames | Implemented |
 | Agent integration (MCP) | 54-tool stdio MCP server for Pi, Claude, Codex and OpenCode | Implemented |
 | Single-host operations | Ubuntu doctor, launch, smoke scripts and CI | Implemented |
-| Multi-node scheduling / live co-editing / SSO | Not in v0.1 | Roadmap |
+| Live notebook events | Durable SSE document events, reconnection cursor, incremental Cell updates | Implemented; production load validation pending |
+| Managed Agent output streaming | Batch stdout/stderr/display in live SSE while run_submit is executing | Implemented; real Kernel smoke pending |
+| Multi-node scheduling / CRDT co-typing / SSO | Not in v0.1 | Roadmap |
 
 ### Shared research workspaces and independent versioned forks
 
@@ -129,7 +131,7 @@ Proposed visual assets (intentionally shown as text until screenshots exist; no 
 | --- | --- | --- |
 | Notebook editor | `docs/assets/notebook-editor.webp` | Code + Markdown + inline plot in the browser |
 | Shared research | `docs/assets/shared-notebooks.webp` | Sidebar Shared with me, collaborator roles and History / Fork dialog |
-| Agent workflow | `docs/assets/agent-live-sync.gif` | **Planned:** agent creates/moves/runs cells and UI updates |
+| Agent workflow | `docs/assets/agent-live-sync.gif` | Capture Agent MCP Cell add/move/delete and durable `run_submit` streamed output in one browser |
 | Variable inspector | `docs/assets/variables-inspector.webp` | Variable names, shapes and types without huge values |
 | Autoresearch trials | `docs/assets/research-results.webp` | **Planned:** trial metric comparison and provenance |
 
@@ -141,6 +143,16 @@ Proposed visual assets (intentionally shown as text until screenshots exist; no 
 Capture at 1440x900 or similar; use anonymized demo notebooks. Optimize screenshots (<300 KB WebP where possible); 8–15s GIF may be converted to MP4 for documentation performance.
 These illustrate current and proposed features; do not depict proposed features as shipped.
 -->
+
+### Live notebook collaboration events (P0-B)
+
+The editor subscribes to `GET /api/notebooks/{id}/events` using a persisted
+global event ID, `Last-Event-ID` replay and per-poll RBAC checks. Edits by a
+different MCP-connected user are shown as incremental Cell changes. For **live
+execution output**, agents should use `run_submit` and track the durable
+`run_id`; legacy synchronous `cell_run` still updates the saved document at
+the end. No live Kernel variables or rich output beyond bounded display MIME
+are broadcast. [Protocol and validation →](docs/LIVE_EVENTS.md).
 
 ### Durable code execution for agents
 
@@ -161,7 +173,7 @@ pi mcp list              # connected, 54 tools
 mcp/.venv/bin/python mcp/test_mcp.py
 ```
 
-Persisted cross-client Notebook changes are automatically reflected in an open editor using a lightweight version probe (approximately 2.5 seconds when visible); streaming execution progress from another agent is not yet available. Agent-facing extensions include `kernel_variables` (bounded metadata-only inspection of live Python objects); this requires execution permission and does not auto-start a runtime. For a practical workflow, see [Agent setup for Pi, OpenCode, Claude and Codex](docs/AGENT_SETUP.md), the [autoresearch prompt](examples/autoresearch-prompt.txt), [Agent-native roadmap](docs/AGENT_NATIVE_ROADMAP.md), and [multi-kernel design](docs/MULTI_KERNEL.md).
+Saved Notebook changes from another Agent are delivered over a single authenticated, replayable **SSE stream** with Cell-level deltas; version polling is a fallback. A managed `run_submit` shows running state and bounded stdout/stderr/display batches as the Kernel executes (rather than waiting for final document save). Hidden tabs close the live stream and resynchronize when reopened; this is not a CRDT editor. See [P0-B live events](docs/LIVE_EVENTS.md). Agent-facing extensions include `kernel_variables` (bounded metadata-only inspection of live Python objects); this requires execution permission and does not auto-start a runtime. For a practical workflow, see [Agent setup for Pi, OpenCode, Claude and Codex](docs/AGENT_SETUP.md), the [autoresearch prompt](examples/autoresearch-prompt.txt), [Agent-native roadmap](docs/AGENT_NATIVE_ROADMAP.md), and [multi-kernel design](docs/MULTI_KERNEL.md).
 
 The MCP server is intended for a trusted local agent. Code execution is arbitrary Python in the notebook container; use a dedicated user and keep the API on localhost or a private tunnel. See **[mcp/README.md](mcp/README.md)** for the full tool catalog, workflows, environment variables and security model.
 

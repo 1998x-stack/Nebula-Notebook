@@ -34,7 +34,7 @@ Fork 不继承权限、GPU/CPU 容器、Kernel RAM、Workspace 文件，历史�
 撤销共享不会删除此前合法创建的私人 Fork。新建入口仅保留首页顶部的
 **New notebook** 按钮，无重复的大卡片。
 
-这不是逐字符 CRDT 实时共写；共享 editor 可运行代码并接触共享运行文件，
+新增 P0-B：用户与 Agent 可通过持久化 SSE 事件自动看见另一端已提交的 Cell 增删移动与修改；托管 `run_submit` 的执行状态和分批输出也能被浏览器持续观察。断线恢复按事件 ID 续传，隐藏页面关闭实时连接，轮询作为降级。详情见 [实时事件协议](docs/LIVE_EVENTS.md)。这依然不是逐字符 CRDT 实时共写；共享 editor 可运行代码并接触共享运行文件，
 仅推荐可信研究伙伴。老版本 Notebook 升级时只保留当前回填快照，
 不能恢复之前未存储的所有版本。
 
@@ -84,6 +84,6 @@ mcp/.venv/bin/python mcp/test_mcp.py   # 50/50 端到端验收
 
 ## 项目边界
 
-这不是 Google 官方 Colab；它不会免费提供 Google 云端 GPU，也不包含 Colab 的全部功能。v0.1 尚不支持实时多人协同、Jupyter widgets、SSO、跨主机调度和公开注册；LLM Agent 通过 `mcp/` 的 MCP server 接入，而不是内置 AI 助手。完整验收状态见 [验证报告](VALIDATION_REPORT.md)。
+这不是 Google 官方 Colab；它不会免费提供 Google 云端 GPU，也不包含 Colab 的全部功能。v0.1 尚不支持 CRDT 实时逐字符共写、Jupyter widgets、SSO、跨主机调度和公开注册；LLM Agent 通过 `mcp/` 的 MCP server 接入，而不是内置 AI 助手。完整验收状态见 [验证报告](VALIDATION_REPORT.md)。
 
 欢迎阅读 [英文文档](README.md)、提交 [Issue](https://github.com/1998x-stack/Nebula-Notebook/issues) 或参考 [贡献指南](CONTRIBUTING.md) 参与开发。MIT 开源许可。

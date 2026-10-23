@@ -25,10 +25,13 @@ stale-output protection and explicit restart recovery.
 - Document explicitly that one Uvicorn worker is required. No multi-node
   claim, no exactly-once side effects.
 
-## P0-B — Cross-client event stream (next PR)
+## P0-B — Cross-client event stream (this iteration)
 
-**Deliverable:** a single `/api/notebooks/{id}/events` SSE subscription for
-Notebook structural changes and managed Run state/output events.
+**Delivered in this iteration:** durable `/api/notebooks/{id}/events` SSE replay,
+committed Cell-level deltas, managed Run status/output batches, RBAC rechecks,
+foreground resume and fallback revision probing.
+**Outstanding acceptance:** real multi-client Pi + CPU/GPU Kernel smoke tests,
+resource/retention tuning and instrumenting legacy `cell_run` streaming.
 
 **Suggested files:** `backend/app/events.py`, `db.py`,
 `frontend/src/hooks/useNotebookEvents.js`,
@@ -49,7 +52,7 @@ Notebook structural changes and managed Run state/output events.
 }
 ```
 
-Store events **after document commit** with monotonic sequence IDs. A single
+Store events **in the same transaction as the document commit** with monotonic sequence IDs. A single
 SSE connection per visible notebook, `Last-Event-ID` resume, heartbeat, and
 gap detection. Use Redis Streams/Postgres outbox only if the deployment later
 runs multiple processes; do NOT rely on process-local broadcasting then.
