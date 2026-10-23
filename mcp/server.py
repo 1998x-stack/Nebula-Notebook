@@ -213,6 +213,23 @@ async def notebook_version(notebook_id: str, version: int) -> dict:
     return await client.get_version(notebook_id, version)
 
 
+@mcp.tool(annotations=WRITE)
+async def notebook_fork_draft(notebook_id: str, base_version: int,
+                              mine_title: str, mine_document: dict, operation_id: str,
+                              folder_id: str | None = None) -> dict:
+    """Preserve an unsaved or conflicting draft as an independent private Fork.
+
+    Reuse operation_id with identical arguments for retry safety. This does
+    not alter the shared Notebook or copy Kernel memory and private files.
+    """
+    _require_write("notebook_fork_draft")
+    nb = await client.fork_unsaved_draft(notebook_id, base_version, mine_title,
+                                         mine_document, operation_id, folder_id)
+    return {"id": nb["id"], "title": nb["title"], "version": nb["version"],
+            "role": nb["role"], "forked_from_notebook_id": nb.get("forked_from_notebook_id"),
+            "forked_from_version": nb.get("forked_from_version")}
+
+
 @mcp.tool(annotations=READ)
 async def notebook_merge_preview(notebook_id: str, base_version: int,
                                  mine_title: str, mine_document: dict,
