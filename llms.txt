@@ -11,8 +11,9 @@ Canonical project: https://github.com/1998x-stack/Nebula-Notebook
 - [Architecture](https://github.com/1998x-stack/Nebula-Notebook/blob/main/docs/ARCHITECTURE.md): document state, session, Kernel, WebSocket, security boundaries.
 - [FAQ](https://github.com/1998x-stack/Nebula-Notebook/blob/main/docs/FAQ.md): direct answers about GPU, Jupyter support, hosting, sharing and security.
 - [Comparison](https://github.com/1998x-stack/Nebula-Notebook/blob/main/docs/COMPARISON.md): Nebula vs Colab vs JupyterLab.
+- [MCP server](https://github.com/1998x-stack/Nebula-Notebook/blob/main/mcp/README.md): 35-tool stdio MCP server for Pi, Claude, Codex and OpenCode; notebook/cell/run/workspace/admin tools, client configs and security model.
 - [Security](https://github.com/1998x-stack/Nebula-Notebook/blob/main/SECURITY.md): beta threat model and disclosure instructions.
 - [Validation](https://github.com/1998x-stack/Nebula-Notebook/blob/main/VALIDATION_REPORT.md): evidence and limitations of tests.
 
 ## Important limitations
-Not affiliated with Google or Project Jupyter. No managed cloud GPU. Do not deploy v0.1 for untrusted internet users or imply VM-grade security. Runtime end-to-end execution and GPU acceptance must be verified on the target host.
+Not affiliated with Google or Project Jupyter. No managed cloud GPU. Do not deploy v0.1 for untrusted internet users or imply VM-grade security. Runtime end-to-end execution and GPU acceptance must be verified on the target host. The MCP server reuses the same user privileges and executes Python; use a dedicated account and keep it local.

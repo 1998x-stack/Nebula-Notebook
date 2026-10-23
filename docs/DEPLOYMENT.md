@@ -55,6 +55,25 @@ The check launches an ephemeral GPU container and exits non-zero if `torch.cuda.
 
 Do not globally publish Jupyter port `8888`. Runtime ports should remain bound to `127.0.0.1`.
 
+## MCP server for LLM agents
+
+`mcp/` is an optional stdio MCP server that exposes 35 Nebula tools and two resources to Pi, Claude Desktop/Code, Codex CLI and OpenCode. It logs in through the normal API and uses the same WebSocket kernel proxy; it does not bypass auth/RBAC. Local file import/export is restricted by `NEBULA_MCP_FS_ROOT`.
+
+```bash
+# One-time dependency setup (or let mcp/run.sh bootstrap it)
+uv venv mcp/.venv
+uv pip install -r mcp/requirements.txt
+
+# Register with Pi (user-level ~/.pi/agent/mcp.json)
+./mcp/install-pi.sh
+pi mcp list
+
+# End-to-end MCP acceptance test (API must be running)
+mcp/.venv/bin/python mcp/test_mcp.py
+```
+
+Credentials: set `NEBULA_EMAIL`/`NEBULA_PASSWORD` in the MCP client environment, or keep the repository `.env` as the fallback. Prefer a dedicated agent account for daily use; `user_*` and `audit_list` require an administrator. Code execution is arbitrary Python in the notebook container, so treat the MCP client as trusted. See [mcp/README.md](../mcp/README.md) for the full tool catalog and all client configs.
+
 ## Browser access via HTTPS (advanced, trusted users only)
 
 The recommended initial setup is localhost plus SSH tunnel. For a **security-reviewed private deployment**, terminate TLS in a reverse proxy such as Caddy, restrict who can connect at the network layer, set `ALLOWED_ORIGINS` to the exact HTTPS origin and `SECURE_COOKIE=true`. Verify WebSocket upgrade forwarding and test login, saving and code execution after configuring the proxy. This does **not** change the security warning against untrusted public signups.
@@ -79,7 +98,7 @@ cd ../frontend && npm install && npm run build && cd ..
 NEBULA_SMOKE_EMAIL=admin@example.com NEBULA_SMOKE_PASSWORD='your-real-password'   backend/.venv/bin/python scripts/smoke.py
 ```
 
-The smoke script requires the backend to be running and the CPU runtime image built. CI tests do not prove physical GPU behavior. See [Validation report](../VALIDATION_REPORT.md).
+The smoke script requires the backend to be running and the CPU runtime image built. CI tests do not prove physical GPU behavior. For agent integration, run `mcp/.venv/bin/python mcp/test_mcp.py` after the API is up. See [Validation report](../VALIDATION_REPORT.md) and [mcp/README.md](../mcp/README.md).
 
 ## Operations and backup
 

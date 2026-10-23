@@ -11,6 +11,7 @@ Nebula Notebook v0.1 is a **beta research/development tool for trusted environme
 ## Scope and assumptions
 
 - The backend process can control the Docker daemon. Docker group membership is effectively privileged on the host. Only trusted administrators should operate this service or control Docker access.
+- The optional `mcp/` server is a **local stdio adapter** for LLM agents. It holds a Nebula session cookie and therefore has exactly that account's privileges, including arbitrary Python execution through `cell_run`/`code_execute`. Use a dedicated non-admin agent account for notebook work, keep the MCP client local, restrict local file operations with `NEBULA_MCP_FS_ROOT`, and use `NEBULA_MCP_READONLY=1` when mutations are not needed.
 - Notebook **editors can execute Python** in a container with access to that notebook's persistent workspace. Only grant editor access to trusted collaborators.
 - Notebook viewers may read saved notebook source and outputs; do not share notebooks with embedded secrets, tokens, personally identifying data, or sensitive data.
 - Docker containers share the host kernel. They are not an adequate hard security boundary against malicious tenants; NVIDIA GPU passthrough adds attack surface.

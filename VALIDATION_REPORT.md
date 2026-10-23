@@ -21,6 +21,10 @@
 - GPU availability on the user's Ubuntu computer: no direct access to their machine.
 - Browser cross-browser GUI tests and deployment smoke test: require installable dependencies and running deployment.
 
+## Additional self-hosted acceptance evidence (2026-10-23)
+
+A separate single-host CPU deployment was exercised end-to-end on Ubuntu 24.04 with Python 3.12, Node 22, Docker 29 and the CPU image. Evidence and exact commands are in [`deploy-local/README.md`](deploy-local/README.md): backend pytest 6/6, official smoke test PASS, 97 API/WebSocket/Docker checks, 15 localhost browser E2E checks, 7 LAN-HTTP browser checks, 50 MCP server checks, and Pi MCP discovery (`connected, 35 tools`). The host has no NVIDIA driver, so GPU selection remained disabled; this does not validate the GPU path. Findings from that run (markdown-cell autosave schema, `crypto.randomUUID` on non-secure origins, kernel first-message relay race, `display_data.transient`, inline matplotlib example) were fixed before release.
+
 ## How to validate after download on Ubuntu
 
 1. Run `./scripts/doctor.sh`.

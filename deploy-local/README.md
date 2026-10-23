@@ -1,6 +1,6 @@
 # Nebula Notebook 本地部署 · 验收 · 问题记录
 
-> 本目录是**本次自托管部署与验收的工件/报告**（脚本可复用；`wheels/`、`screenshots/`、`logs/` 为本地大文件，不入库）。基于上游 commit 23adda0，包含 4 个代码问题修复和 1 处示例 notebook 修复（见第 5 节）。
+> 本目录是**本次自托管部署与验收的工件/报告**（脚本可复用；`wheels/`、`screenshots/`、`logs/` 为本地大文件，不入库）。基于上游 commit 23adda0，包含 5 个代码问题修复和 1 处示例 notebook 修复（见第 5 节）。
 
 ## 1. 当前状态
 
@@ -13,6 +13,7 @@
 - 管理员密码：见仓库根目录 `.env` 的 `ADMIN_PASSWORD`（文件权限 600；首次启动时写入数据库，之后改 `.env` 不会自动改库里的密码）。
 - 已导入示例笔记本：**Nebula demo · 示例笔记本**（6 个 cell，CPU 可跑；GPU cell 会提示 CPU 镜像没有 PyTorch，这是预期行为）。
 - 示例笔记本已重置为干净状态（6 个 cell、无输出）；它的 **CPU runtime 当前处于 ready**（用户已连接过），刷新页面即可直接运行；如果已停止，点 **Connect** 重新启动。
+- **Pi agent 已接入**：用户级 `~/.pi/agent/mcp.json` 注册了 `nebula` MCP server；`pi mcp list` → `connected, 35 tools (codemode)`。其他客户端配置见 `mcp/README.md`。
 
 ## 2. 部署方式（本机实际执行）
 
@@ -81,9 +82,34 @@ cd deploy-local/e2e && npm i && npx playwright install chromium && node e2e.cjs 
 NEBULA_LAN_BASE=http://<你的局域网IP>:8000 node lan-e2e.cjs                        # 局域网 HTTP E2E
 
 # 7) 导入示例（UI 的 Import .ipynb，或用 API）
+
+# 8) 接入 LLM agent（可选）
+./mcp/install-pi.sh && pi mcp list
 ```
 
 > `scripts/launch.sh` 监听 `127.0.0.1`；本部署为了从局域网/端口转发体验，使用 `deploy-local/start.sh` 监听 `0.0.0.0`。正式环境建议改回 `127.0.0.1` + SSH 隧道/VPN。
+
+### 2.3 Agent / MCP 接入（本次新增）
+
+`mcp/` 是一个 stdio MCP server，把 Nebula 的能力封装成 **35 个工具 + 2 个 resources**：
+
+- Notebook：create / create_file / import / export / rename / delete / get / list
+- Cell：list / get / add / insert / update / delete / move / run / run_all / code_execute
+- Runtime：start / stop / status / interrupt
+- Workspace：list / upload / download / delete
+- 权限：share_list / share_add / share_remove；user_list / user_create / user_set_active / audit_list
+- 资源：`nebula://notebooks`、`nebula://notebooks/{id}`
+
+架构上它**只调用现有 REST/WS API**，复用同一套 session/CSRF/RBAC，不绕过安全边界。执行结果默认写回 notebook，`transient` 等非法字段在写入前被清理。
+
+```bash
+./mcp/install-pi.sh         # 注册到 ~/.pi/agent/mcp.json
+pi mcp list                 # 应显示 connected, 35 tools
+# Claude / Codex / OpenCode 配置见 mcp/README.md 和 mcp/clients/
+mcp/.venv/bin/python mcp/test_mcp.py   # 50/50 端到端验收
+```
+
+本地文件操作受 `NEBULA_MCP_FS_ROOT` 限制；`NEBULA_MCP_READONLY=1` 可禁用写/执行工具。完整工具目录、配置示例与安全说明见 **`mcp/README.md`**。
 
 ## 3. 常用命令
 
@@ -119,6 +145,9 @@ NEBULA_HOST=127.0.0.1 ./deploy-local/start.sh
 | 扩展验收 `deploy-local/test_extended.py` | **97 / 97 通过** | 见下表 |
 | 浏览器 E2E（Playwright/Chromium，localhost） | **15 / 15 通过** | 登录、建用户、建笔记本、Connect、运行 cell、自动保存、上传文件、分享、导出、刷新持久化、viewer 只读、删除 |
 | 浏览器 E2E（**局域网 HTTP origin**） | **7 / 7 通过** | 复现 `crypto.randomUUID` 缺失条件；连接、运行、新建 cell、Run all 全部通过，无 pageerror |
+| 图片输出自动保存（transient） | **PASS** | `display_data` 不再写入非法 `transient`；保存版本推进，`.save-state` 为 All changes saved |
+| MCP server 端到端 | **50 / 50 通过** | notebook/cell/run/workspace/export/interrupt/runtime start-stop、无 transient、错误提示 |
+| Pi MCP 接入 | **PASS** | `pi mcp list`：connected，35 tools + resources |
 | demo 笔记本局域网复验 | **3 / 3 通过** | 运行输出、新建 cell、Run all 图片渲染 |
 | matplotlib PNG 渲染 | **PASS** | `%matplotlib inline` 后 `.output-image img` naturalWidth=556、naturalHeight=413，无 pageerror（`11-plot-render.png`） |
 | XSS 输出消毒 | **PASS** | `onerror` 被移除，`<script>`/`<iframe>` 被移除，正常 `<b>` 保留，无 pageerror |
@@ -145,7 +174,7 @@ NEBULA_HOST=127.0.0.1 ./deploy-local/start.sh
 
 ## 5. 代码审查发现与修复
 
-深度浏览后，除阅读全部后端/前端/Docker/脚本/文档外，实际跑通了完整链路。发现并修复了 5 个问题：
+深度浏览后，除阅读全部后端/前端/Docker/脚本/文档外，实际跑通了完整链路。发现并修复了 6 个问题：
 
 ### 5.1 严重（用户实测复现）：局域网 HTTP 下 `crypto.randomUUID` 不存在，Run/新建 cell 失效
 
@@ -187,6 +216,20 @@ NEBULA_HOST=127.0.0.1 ./deploy-local/start.sh
 - 修复：在该 cell 首行加 `%matplotlib inline`，并同步更新了已导入的 demo 笔记本。浏览器测试确认图片正常渲染。
 - 注：这不是安全/核心功能 bug，但会直接影响第一次体验，所以一并修复。
 
+### 5.6 严重（用户实测复现）：`display_data.transient` 导致图片输出自动保存 422
+
+- 位置：`frontend/src/main.jsx` 的 kernel 消息处理。
+- 现象（用户反馈）：matplotlib/图片 cell 运行后，自动保存报
+  `Invalid notebook document: Additional properties are not allowed ('transient' was unexpected) ... in display_data`。
+- 根因：Jupyter 的 `display_data` 消息带 `transient`（display_id 等），但 nbformat 的 `display_data` schema 不允许该字段。前端把整个 `message.content` 展开写入 cell.outputs，导致后端 `nbformat.validate` 拒绝保存。
+- 修复：新增 `nbOutput(kind, content)`，按 nbformat 白名单重建输出：
+  - `stream` → `{name, text}`
+  - `error` → `{ename, evalue, traceback}`
+  - `execute_result` → `{data, metadata, execution_count}`
+  - `display_data` → `{data, metadata}`（丢弃 transient 及其他非 schema 字段）
+- 验证：浏览器运行 matplotlib cell，等待自动保存；导出文档中 `display_data` 只有 `data/metadata/output_type`，无 `transient`，版本正常推进（`15-transient-fixed.png`）。
+- 这一修复同时被 MCP server 复用（`mcp/nebula_client.py` 的 `normalize_output`），MCP 的 50 项测试也显式校验导出文档无 `transient`。
+
 查看修复：
 
 ```bash
@@ -210,6 +253,8 @@ git diff -- backend/app/main.py backend/app/runtime.py frontend/src/main.jsx
 ## 7. 测试工件与截图
 
 - `deploy-local/test_extended.py`：97 项 API/WS/Docker 验收脚本。
+- `mcp/`：35-tool MCP server、工具目录、客户端配置（Pi/Claude/Codex/OpenCode）和 50 项 E2E。
+- `logs/mcp-test.log`：MCP 50/50 验收日志。
 - `deploy-local/e2e/e2e.cjs`：Playwright 浏览器 E2E。
 - `deploy-local/e2e/xss.cjs`：HTML 输出 XSS 消毒验证。
 - `deploy-local/screenshots/`：登录、Dashboard、管理、运行、文件、分享、viewer、XSS、最终交付截图；`12-lan-inspect.png`（复现 `randomUUID` 缺失）、`13-lan-fixed.png`（局域网修复后）、`14-demo-lan-fixed.png`（demo 局域网 Run all）。**这些截图和大体积 wheel 为本地工件，未随仓库提交。**
@@ -224,7 +269,8 @@ git diff -- backend/app/main.py backend/app/runtime.py frontend/src/main.jsx
 4. 新建自己的笔记本，试 **Files** 上传 CSV，在代码里 `pandas.read_csv('/workspace/xxx.csv')`。
 5. 进 **Administration** 建一个 viewer/editor 账号，用 **Share** 分享，换浏览器/隐身窗口体验只读/可执行差异。
 6. 停止 runtime 再重连，验证变量丢失、文档和 `/workspace` 文件保留；刷新页面验证自动保存。
-7. 需要清空时：`./deploy-local/stop.sh --runtimes`，删除 `data/nebula.db` 后重启会重新引导管理员（会丢失所有笔记本，谨慎）。
+7. 在 Pi 里直接说：“用 nebula 建一个 sales 分析 notebook，上传 data.csv，插入 cell 并运行”——观察 agent 通过 MCP 完成建 notebook、插 cell、执行和导出。
+8. 需要清空时：`./deploy-local/stop.sh --runtimes`，删除 `data/nebula.db` 后重启会重新引导管理员（会丢失所有笔记本，谨慎）。
 
 ---
 

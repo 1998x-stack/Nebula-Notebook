@@ -26,6 +26,7 @@ Nebula Notebook is a web-based Python notebook server that lets you create, run,
 | Access control | Admin, notebook owner, editor, viewer | Implemented |
 | Save and share | SQLite documents, versioned writes, `.ipynb` import/export | Implemented |
 | Workspace files | Upload/download/delete with guarded flat filenames | Implemented |
+| Agent integration (MCP) | 35-tool stdio MCP server for Pi, Claude, Codex and OpenCode | Implemented |
 | Single-host operations | Ubuntu doctor, launch, smoke scripts and CI | Implemented |
 | Multi-node scheduling / live co-editing / SSO | Not in v0.1 | Roadmap |
 
@@ -34,6 +35,8 @@ Nebula Notebook is a web-based Python notebook server that lets you create, run,
 ```mermaid
 flowchart LR
   Browser[Browser: React notebook editor] <-->|HTTPS + WebSocket| API[FastAPI: auth, RBAC, notebook APIs]
+  Agent[LLM agent: Pi / Claude / Codex / OpenCode] <-->|MCP stdio| MCP[mcp/ MCP server]
+  MCP <-->|REST + WebSocket| API
   API <--> DB[(SQLite document store)]
   API --> Manager[Docker runtime manager]
   Manager --> CPU[CPU: Jupyter + ipykernel]
@@ -85,6 +88,19 @@ docker build -f docker/runtime.gpu.Dockerfile -t nebula-runtime:gpu .
 
 The GPU option is enabled only if the server can start the GPU Docker image and execute `torch.cuda.is_available() == True`. GPU hardware in the **browser/client** does not count. If GPU verification fails, the CPU path remains available. [GPU troubleshooting →](docs/DEPLOYMENT.md#gpu-setup-and-verification)
 
+### Use Nebula from an LLM agent (MCP)
+
+`mcp/` exposes the notebook API as a stdio MCP server with **35 tools and 2 resources**: create/import/export notebooks, insert/update/delete/move cells, run cells and save outputs, `code_execute`, runtime start/stop/interrupt, workspace upload/download/delete, sharing and admin operations. It authenticates through the normal session/CSRF/RBAC API, so it does not add a new trust boundary.
+
+```bash
+./mcp/install-pi.sh      # register in ~/.pi/agent/mcp.json
+pi mcp list              # connected, 35 tools
+# Claude Desktop, Codex CLI and OpenCode configs: mcp/README.md
+mcp/.venv/bin/python mcp/test_mcp.py
+```
+
+The MCP server is intended for a trusted local agent. Code execution is arbitrary Python in the notebook container; use a dedicated user and keep the API on localhost or a private tunnel. See **[mcp/README.md](mcp/README.md)** for the full tool catalog, workflows, environment variables and security model.
+
 ## Validate your installation
 
 ```bash
@@ -112,7 +128,7 @@ For a fresh install, use [Deployment guide](docs/DEPLOYMENT.md), [FAQ](docs/FAQ.
 | Compute | Your Docker host, CPU + optional NVIDIA GPU | Google-managed runtimes, eligibility-dependent accelerators | Configurable server/kernel infrastructure |
 | File format | Jupyter `.ipynb` | Jupyter `.ipynb` | Jupyter `.ipynb` |
 | Team permissions | Admin + owner/editor/viewer | Platform-specific sharing | Depends on deployment and add-ons |
-| AI assistant | Not in v0.1 | Product-integrated AI features | Extensions available |
+| Agent integration | MCP stdio server with 35 tools | Product-integrated AI features | MCP / extensions |
 | General-purpose multi-tenant safety | Not production-hardened | Managed by provider | Depends on deployment |
 
 Nebula Notebook is an **independent project**, not affiliated with or endorsed by Google or Project Jupyter. “Colab” and “Jupyter” are trademarks of their respective owners. [Read a more detailed comparison →](docs/COMPARISON.md).
@@ -125,6 +141,7 @@ backend/tests/         API, authorization and file tests
 frontend/              React + CodeMirror notebook interface
 docker/                CPU and optional NVIDIA CUDA kernel images
 scripts/               Host diagnostics, local launch, GPU check, smoke test
+mcp/                   Stdio MCP server, client configs and acceptance test
 docs/                  Architecture, deployment, FAQ, comparison
 examples/              Sample Jupyter notebook
 .github/               CI, issue and PR templates

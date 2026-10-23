@@ -10,7 +10,8 @@ This comparison is intentionally factual and limited to **Nebula Notebook v0.1**
 | Notebook format | `.ipynb` | `.ipynb` | `.ipynb` |
 | Role model | Provisioned admin/owner/editor/viewer | Account and sharing products | Depends on server deployment |
 | Collaborating in real time | No | Product-dependent | May require extensions or deployment setup |
-| AI code assistant | No | Product-dependent integrated AI | Extension ecosystem |
+| Built-in AI code assistant | No | Product-dependent integrated AI | Extension ecosystem |
+| Agent / MCP | Yes: 35-tool stdio MCP server | Product-dependent | MCP / extensions |
 | Remote arbitrary-user execution safety | Not supported | Operated by provider | Depends on security/deployment architecture |
 
 ### Which one should I use?

@@ -3,6 +3,7 @@
 ## Trust boundaries
 
 - **Browser** never receives a Jupyter token or a Docker socket. Uses an opaque HTTP-only session cookie and per-session CSRF header for writes. WebSocket connections enforce the allowed Origin and check permission before forwarding each execution request.
+- **MCP server (`mcp/`)** is a local stdio adapter used by LLM agents. It logs in through the public REST API and uses the same WebSocket proxy; it does not import backend modules, touch SQLite/Docker directly, or bypass RBAC. Its local file operations are limited by `NEBULA_MCP_FS_ROOT`; `NEBULA_MCP_READONLY=1` disables mutations and execution.
 - **FastAPI gateway** authenticates users, authorizes notebook access, validates incoming `.ipynb` documents with nbformat and enforces a monotonic document version via compare-and-swap.
 - **Jupyter kernel container** runs as the same unprivileged Unix UID/GID as the API process. It receives a notebook-specific host workspace volume and a random Jupyter token. Only a random localhost-bound host port exposes it to the gateway.
 - **Docker daemon** remains a highly privileged dependency. There is deliberately no Docker socket inside the user notebook container. Limit which operators can control the API host and Docker group.
@@ -47,6 +48,10 @@ Administrator has broad access to all notebooks. This is a policy decision, and 
 8. No idle-timeout garbage collection, per-user storage quota, WebSocket bandwidth quota, rate-limit persistence, image supply-chain verification, SSH/SAML/OIDC, SSO, collaborative CRDT editing or distributed GPU scheduler yet.
 9. A user with editor privileges can run Python within the notebook and alter its workspace. Saved output can embed content and sensitive data; treat output as untrusted and consider privacy policies before sharing.
 10. GPU probe can be resource-intensive (starts a container and imports torch) and is cached for 120 seconds. On-demand refresher should be admin rate-limited in a public installation.
+
+## MCP adapter
+
+`mcp/` exposes notebook CRUD, cell editing/insertion, execution, runtime control, workspace files, sharing and administration as 35 MCP tools plus two resources (`nebula://notebooks`, `nebula://notebooks/{id}`). Agents can create a real `.ipynb` at a local path and import it, or work directly on a notebook by id. Outputs returned by the kernel are normalized to the nbformat schema before being saved, so Jupyter-only fields such as `transient` never reach persistence. The adapter is tested with the MCP Python client and with Pi (`pi mcp list`); see `mcp/README.md`.
 
 ## V2+/production roadmap
 

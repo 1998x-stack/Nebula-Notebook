@@ -2,7 +2,7 @@
 
 **Nebula Notebook** 是一个开源、自托管、受 Google Colab 与 Jupyter 启发的浏览器 Python Notebook 项目。它使用 React + CodeMirror 编写 `.ipynb` 文档，通过 FastAPI + WebSocket 与真正的 Jupyter Kernel 交互；后端以 Docker 管理 CPU 运行环境，并在 NVIDIA Docker 环境中确认 PyTorch CUDA 可用后才开放 GPU 选择。
 
-[English README](README.md) · [部署指南](docs/DEPLOYMENT.md) · [常见问题](docs/FAQ.md) · [安全说明](SECURITY.md) · [贡献指南](CONTRIBUTING.md)
+[English README](README.md) · [部署指南](docs/DEPLOYMENT.md) · [MCP Agent 接入](mcp/README.md) · [常见问题](docs/FAQ.md) · [安全说明](SECURITY.md) · [贡献指南](CONTRIBUTING.md)
 
 > **当前定位：v0.1 Beta，适用于个人电脑、实验室及可信成员的内部使用。** 请勿将现有 Docker 隔离直接视为允许互联网陌生用户任意执行 Python 的生产级安全沙箱。部署在公网前必须进行额外隔离与安全审计。
 
@@ -15,6 +15,7 @@
 | GPU | 在服务端 Docker CUDA 镜像中完成实际 PyTorch 检测后开放选择 |
 | 用户权限 | 管理员、Notebook 所有者、编辑者、只读者 |
 | 持久化 | SQLite、文档版本控制、ipynb 导入导出、工作目录 |
+| Agent 接入 | 35-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
 | 运维 | Ubuntu 检测、部署脚本、冒烟测试与 CI |
 
 ## Ubuntu 22.04/24.04 快速部署
@@ -47,8 +48,20 @@ docker build -f docker/runtime.gpu.Dockerfile -t nebula-runtime:gpu .
 
 如果 GPU 探测失败，继续使用 CPU 模式。详情参见英文 [GPU 部署与排障](docs/DEPLOYMENT.md#gpu-setup-and-verification)。
 
+## 用 LLM Agent 操作（MCP）
+
+`mcp/` 提供 stdio MCP server，把 Nebula 的 notebook / cell / kernel / workspace / 分享 / 管理能力封装为 **35 个工具 + 2 个 resources**。它复用现有 REST/WebSocket API 的 session、CSRF 和 RBAC，不新增信任边界。
+
+```bash
+./mcp/install-pi.sh      # 注册到 ~/.pi/agent/mcp.json
+pi mcp list              # connected, 35 tools
+mcp/.venv/bin/python mcp/test_mcp.py   # 50/50 端到端验收
+```
+
+支持传统 notebook 操作，也支持 `notebook_create_file(path=..., title=...)` 把真实 `.ipynb` 落到指定本地路径。完整工具目录、Claude/Codex/OpenCode 配置和安全模型见 **[mcp/README.md](mcp/README.md)**。
+
 ## 项目边界
 
-这不是 Google 官方 Colab；它不会免费提供 Google 云端 GPU，也不包含 Colab 的全部功能。v0.1 尚不支持实时多人协同、Jupyter widgets、SSO、跨主机调度、公开注册和 AI Agent。完整验收状态见 [验证报告](VALIDATION_REPORT.md)。
+这不是 Google 官方 Colab；它不会免费提供 Google 云端 GPU，也不包含 Colab 的全部功能。v0.1 尚不支持实时多人协同、Jupyter widgets、SSO、跨主机调度和公开注册；LLM Agent 通过 `mcp/` 的 MCP server 接入，而不是内置 AI 助手。完整验收状态见 [验证报告](VALIDATION_REPORT.md)。
 
 欢迎阅读 [英文文档](README.md)、提交 [Issue](https://github.com/1998x-stack/Nebula-Notebook/issues) 或参考 [贡献指南](CONTRIBUTING.md) 参与开发。MIT 开源许可。

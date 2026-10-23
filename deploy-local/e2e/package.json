@@ -8,6 +8,7 @@
     "lan": "node lan-e2e.cjs",
     "xss": "node xss.cjs",
     "plot": "node plot.cjs",
+    "transient": "node transient-test.cjs",
     "demo-lan": "node demo-lan.cjs"
   },
   "dependencies": {
