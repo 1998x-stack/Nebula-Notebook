@@ -35,7 +35,7 @@ def sha_file(path):
 def safe_archive_name(name):
     parts = PurePosixPath(name).parts
     if (not parts or PurePosixPath(name).is_absolute()
-            or '..' in parts or '.' in parts or '\\' in name
+            or '..' in parts or '.' in parts or chr(92) in name
             or name.startswith('/') or '\x00' in name):
         raise ValueError('Unsafe archive entry: ' + repr(name))
     return name
