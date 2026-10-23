@@ -225,18 +225,24 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None,
 
 
 async def _finish(run_id: str, status: str, *, outputs=None, count=None, error=None):
+    """Commit terminal status and durable event atomically; only one wins."""
+    if status not in FINAL:
+        raise ValueError(f'Invalid terminal run status: {status}')
     async with SessionLocal() as db:
         run = await db.get(ExecutionRun, run_id)
-        if not run or run.status in FINAL:
+        if not run:
             return
-        run.status = status
-        run.finished_at = utcnow()
-        run.outputs = outputs or []
-        run.execution_count = count
-        run.error = str(error)[:1000] if error else None
+        changed = await db.execute(update(ExecutionRun).where(
+            ExecutionRun.id == run_id, ExecutionRun.status.in_(ACTIVE)).values(
+                status=status, finished_at=utcnow(), outputs=outputs if outputs is not None else [],
+                execution_count=count, error=str(error)[:1000] if error else None))
+        if changed.rowcount != 1:
+            await db.rollback()
+            return
+        append_event(db, run.notebook_id, 'run.finished', actor_id=run.actor_id,
+                     run_id=run.id, cell_id=run.cell_id,
+                     payload={'status': status, 'error': str(error)[:500] if error else None})
         await db.commit()
-    await emit_run(run_id, 'run.finished', {'status': status,
-                    'error': str(error)[:500] if error else None})
 
 
 async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool:
@@ -371,11 +377,21 @@ def schedule_run(run_id: str):
 
 
 async def recover_runs():
-    """Nonterminal records are marked UNKNOWN on restart, NEVER auto-replayed."""
+    """Mark interrupted and journal outcomes together, never replay Python."""
     async with SessionLocal() as db:
-        await db.execute(update(ExecutionRun).where(ExecutionRun.status.in_(ACTIVE)).values(
-            status='interrupted', error='Server restarted; execution outcome must be verified',
-            finished_at=utcnow()))
+        pending = (await db.scalars(select(ExecutionRun).where(
+            ExecutionRun.status.in_(ACTIVE)))).all()
+        for run in pending:
+            changed = await db.execute(update(ExecutionRun).where(
+                ExecutionRun.id == run.id, ExecutionRun.status.in_(ACTIVE)).values(
+                    status='interrupted',
+                    error='Server restarted; execution outcome must be verified',
+                    finished_at=utcnow()))
+            if changed.rowcount:
+                append_event(db, run.notebook_id, 'run.finished',
+                             actor_id=run.actor_id, run_id=run.id, cell_id=run.cell_id,
+                             payload={'status': 'interrupted',
+                                      'error': 'Server restart: execution outcome unknown'})
         await db.commit()
 
 
@@ -430,7 +446,7 @@ async def submit_run(db, nb: Notebook, actor_id: str, *, cell_id: str,
 
 
 async def request_cancel(db, run: ExecutionRun):
-    if run.status in FINAL:
+    if run.status in FINAL or run.status == 'cancelling':
         return run
     if run.status == 'queued':
         run.status, run.cancel_requested, run.finished_at = 'cancelled', True, utcnow()
