@@ -109,7 +109,7 @@ async def test_worker_persists_result_to_original_cell(clients, monkeypatch):
     assert result['status'] == 'succeeded', result
     doc = (await clients.get(f"/api/notebooks/{nb['id']}")).json()
     assert doc['version'] == 2
-    assert doc['document']['cells'][1]['outputs'][0]['text'] == 'hello\n'
+    assert ''.join(doc['document']['cells'][1]['outputs'][0]['text']) == 'hello\n'
 
 
 async def test_worker_does_not_overwrite_concurrent_cell_edit(clients, monkeypatch):
