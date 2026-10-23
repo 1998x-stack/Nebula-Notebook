@@ -91,3 +91,15 @@ events. A closed/hidden editor releases the SSE connection; its fallback
 version probe remains available. Journal records are currently full retention:
 backups, tenant quotas, pruning with explicit cursor reset, and performance
 benchmarks are required before hosted multi-tenant deployment.
+
+## P0-C arbitration and server-side Cell edit operations
+
+The `kernel_gates` primary key serializes legacy browser/MCP WebSocket
+execute requests with managed `run_submit` dispatch. A gate is released
+only after matching Kernel idle; a disconnected or restarted API marks it
+uncertain and requires intentional Runtime stop/reset. `cell_operations`
+persists the actor, request digest and replay result by operation ID and uses
+Notebook version CAS; a successful operation atomically adds an immutable
+revision and a `document.committed` SSE event. See
+[Execution Arbitration](EXECUTION_ARBITRATION.md) for detailed caveats and
+multi-user acceptance steps. This is not multi-process/fenced scheduling.
