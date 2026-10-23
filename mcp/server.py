@@ -213,6 +213,40 @@ async def notebook_version(notebook_id: str, version: int) -> dict:
     return await client.get_version(notebook_id, version)
 
 
+@mcp.tool(annotations=READ)
+async def notebook_merge_preview(notebook_id: str, base_version: int,
+                                 mine_title: str, mine_document: dict,
+                                 resolutions: dict[str, Literal["mine","theirs"]] | None = None) -> dict:
+    """Preview three-way merge against current shared Notebook. NEVER writes.
+
+    Draft is based on immutable base_version; independent Cell edits combine
+    automatically. Conflict keys (e.g. cell:example or order) need explicit
+    resolutions using mine/theirs before commit.
+    """
+    return await client.preview_merge(notebook_id, base_version, mine_title,
+                                      mine_document, resolutions)
+
+
+@mcp.tool(annotations=WRITE)
+async def notebook_merge_commit(notebook_id: str, base_version: int,
+                                expected_latest_version: int, mine_title: str,
+                                mine_document: dict, operation_id: str,
+                                resolutions: dict[str, Literal["mine","theirs"]] | None = None) -> dict:
+    """Explicit CAS merge; reuse the same operation_id/arguments after timeout.
+
+    Call notebook_merge_preview first; on 409 fetch current version, preview
+    again and consciously resolve conflicts, or notebook_fork instead.
+    """
+    _require_write("notebook_merge_commit")
+    result = await client.commit_merge(notebook_id, base_version,
+                                      expected_latest_version, mine_title,
+                                      mine_document, operation_id, resolutions)
+    return {"notebook_id": result["notebook_id"], "version": result["version"],
+            "operation_id": result["operation_id"],
+            "replayed": result["replayed"],
+            "resolved_conflicts": result.get("resolved_conflicts", [])}
+
+
 @mcp.tool(annotations=WRITE)
 async def notebook_fork(notebook_id: str, version: int,
                         title: str | None = None, folder_id: str | None = None) -> dict:
