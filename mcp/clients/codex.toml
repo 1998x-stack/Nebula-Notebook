@@ -1,0 +1,4 @@
+[mcp_servers.nebula]
+command = "/path/to/Nebula-Notebook/mcp/run.sh"
+args = []
+env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/your/workspace" }

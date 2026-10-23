@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "nebula": {
+      "command": "/path/to/Nebula-Notebook/mcp/run.sh",
+      "args": [],
+      "cwd": "/path/to/Nebula-Notebook",
+      "env": {
+        "NEBULA_URL": "http://127.0.0.1:8000",
+        "NEBULA_MCP_FS_ROOT": "/path/to/your/workspace"
+      },
+      "description": "Nebula Notebook: create/edit/run real Jupyter notebooks, cells, kernels and workspace files",
+      "exposure": "codemode",
+      "timeout": 180
+    }
+  }
+}
