@@ -91,6 +91,15 @@ The GPU option is enabled only if the server can start the GPU Docker image and 
 
 ### Screenshots and demo (contributions welcome)
 
+Proposed visual assets (intentionally shown as text until screenshots exist; no broken image links):
+
+| Visual | Suggested filename | What it should show |
+| --- | --- | --- |
+| Notebook editor | `docs/assets/notebook-editor.webp` | Code + Markdown + inline plot in the browser |
+| Agent workflow | `docs/assets/agent-live-sync.gif` | **Planned:** agent creates/moves/runs cells and UI updates |
+| Variable inspector | `docs/assets/variables-inspector.webp` | Variable names, shapes and types without huge values |
+| Autoresearch trials | `docs/assets/research-results.webp` | **Planned:** trial metric comparison and provenance |
+
 <!-- SCREENSHOT TODO (do not add broken links before assets exist):
 1. docs/assets/notebook-editor.png — Desktop notebook editor with code, Markdown and chart output; alt="Nebula Notebook web editor running Python cells"
 2. docs/assets/agent-live-sync.gif — Pi agent adds, moves and runs cells while browser renders changes; alt="Agent-driven notebook execution and live output"

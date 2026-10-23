@@ -30,3 +30,17 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+  mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile MCP sources
+        run: python -m compileall -q mcp
+      - name: Test bounded variable inspector
+        run: PYTHONPATH=mcp python -m unittest discover -s mcp -p 'test_variable_probe.py' -v
+      - name: Verify generated tool reference
+        run: python mcp/gen_tool_reference.py --check

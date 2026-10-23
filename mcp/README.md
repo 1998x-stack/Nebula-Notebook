@@ -168,11 +168,11 @@ env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/you
 
 | Tool | 作用 |
 |---|---|
+| `kernel_variables` | Inspect bounded live Python variable metadata (requires running Kernel; executes a fixed probe) |
 | `runtime_start` / `runtime_stop` / `runtime_status` | 管理 CPU/GPU runtime |
 | `runtime_diagnose` | **内核侧环境体检**：包版本、matplotlib 后端与 inline 依赖、CJK 字体、`/workspace` 真实目录树、env |
 | `runtime_quota` | 列出每个 notebook 是否正持有 runtime（429 配额排查用） |
 | `kernel_interrupt` | 中断当前执行 |
-| `kernel_variables` | `notebook_id:str`, `names:list[str] | None`, `limit:int`, `timeout:float` | `names` = `null`<br>`limit` = `80`<br>`timeout` = `20` |
 | `workspace_list` | 列文件；`recursive=true` 走内核，能看到**子目录** |
 | `workspace_write` | 往 `/workspace` 的**任意相对深度**写文件（自动建父目录） |
 | `workspace_read` | 读任意深度文件（文本或 base64），走内核 |
@@ -329,6 +329,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | Tool | 参数 | 默认 |
 |---|---|---|
 | `kernel_interrupt` | `notebook_id:str` |  |
+| `kernel_variables` | `notebook_id:str`, `names:list[str] | None`, `limit:int`, `timeout:float` | `names` = `null`<br>`limit` = `80`<br>`timeout` = `20` |
 | `runtime_diagnose` | `notebook_id:str`, `timeout:float` | `timeout` = `60` |
 | `runtime_quota` | — |  |
 | `runtime_start` | `notebook_id:str`, `mode:Literal['cpu', 'gpu']` | `mode` = `'cpu'` |

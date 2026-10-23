@@ -69,13 +69,13 @@ def parse_variable_probe(result: dict) -> dict:
     """Decode an exact marker; never return arbitrary output as a variable report."""
     if result.get('status') != 'ok':
         raise ValueError(f"Kernel variable inspection failed: {result.get('status')}")
-    for output in reversed(result.get('outputs', [])):
-        if output.get('output_type') != 'stream' or output.get('name') != 'stdout':
-            continue
-        body = output.get('text', '')
-        if isinstance(body, list):
-            body = ''.join(body)
-        for line in reversed(str(body).splitlines()):
-            if line.startswith(PREFIX):
-                return json.loads(line[len(PREFIX):])
+    chunks = []
+    for output in result.get('outputs', []):
+        if output.get('output_type') == 'stream' and output.get('name') == 'stdout':
+            body = output.get('text', '')
+            chunks.append(''.join(body) if isinstance(body, list) else str(body))
+    # A single printed JSON line can arrive in multiple Jupyter stream messages.
+    for line in reversed(''.join(chunks).splitlines()):
+        if line.startswith(PREFIX):
+            return json.loads(line[len(PREFIX):])
     raise ValueError("Kernel variable probe did not return a structured response")
