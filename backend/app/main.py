@@ -33,7 +33,7 @@ from .migrations import apply_migrations
 from .cell_ops import apply_cell_operation
 from .merge import merge_plan, commit_merge
 from .research import (create_experiment as create_research_experiment, register_trial, finalize_trial,
-                       get_experiment, research_state, public_experiment, MAX_TRIALS)
+                       get_experiment, research_state, public_experiment, _evaluation_locks)
 from .research_artifacts import store_artifact, public_artifact, read_artifact
 from .kernel_gate import claim as claim_kernel, release as release_kernel, uncertain as uncertain_kernel, recover_gates, reset_after_runtime_stop
 from .events import append_event, cursor as event_cursor, delta as document_delta, notebook_stream
@@ -468,7 +468,11 @@ async def research_finish_trial(notebook_id: str, experiment_id: str, trial_id: 
                                 actor=Depends(csrf_user)):
     await require_notebook(db, notebook_id, actor, 'editor')
     e = await get_experiment(db, notebook_id, experiment_id)
-    return await finalize_trial(db, e, actor.id, trial_id, body.evaluator_run_id)
+    # Single-worker SQLite admission: serialize metric comparisons so two
+    # finished Trials cannot both claim the same prior-best threshold.
+    lock = _evaluation_locks.setdefault(e.id, asyncio.Lock())
+    async with lock:
+        return await finalize_trial(db, e, actor.id, trial_id, body.evaluator_run_id)
 
 
 @app.post('/api/notebooks/{notebook_id}/research/{experiment_id}/close')
