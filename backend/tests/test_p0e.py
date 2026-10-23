@@ -200,9 +200,13 @@ async def test_draft_fork_preserves_local_work_without_overwriting_shared_notebo
     assert (await save(clients,h,nb['id'],1,remote)).status_code==200
     fork=await clients.post(f"/api/notebooks/{nb['id']}/merge/fork-draft",
                             headers=h,json={'base_version':1,'mine_document':mine,
-                                            'mine_title':'My research'})
+                                            'mine_title':'My research','operation_id':'save-private-draft-01'})
     assert fork.status_code==200, fork.text
     child=fork.json()
+    duplicate=await clients.post(f"/api/notebooks/{nb['id']}/merge/fork-draft",
+                             headers=h,json={'base_version':1,'mine_document':mine,
+                                             'mine_title':'My research','operation_id':'save-private-draft-01'})
+    assert duplicate.status_code==200 and duplicate.json()['id']==child['id']
     assert child['id']!=nb['id'] and child['version']==1 and child['role']=='owner'
     assert child['forked_from_notebook_id']==nb['id']
     assert child['forked_from_version']==1
