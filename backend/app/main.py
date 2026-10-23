@@ -117,7 +117,12 @@ class ShareNotebook(BaseModel):
 
 class SubmitExecutionRun(BaseModel):
     cell_id: str = Field(min_length=1, max_length=80)
-    idempotency_key: str = Field(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_-]+
+    idempotency_key: str = Field(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
+    mode: Literal['cpu', 'gpu'] = 'cpu'
+    timeout_seconds: int = Field(default=300, ge=1, le=1800)
+
+
+class LaunchRuntime(BaseModel):
     mode: str
 
 
