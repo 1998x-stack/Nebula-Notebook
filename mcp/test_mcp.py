@@ -17,6 +17,7 @@ import sys
 import tempfile
 from datetime import timedelta
 from pathlib import Path
+from uuid import uuid4
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -120,6 +121,7 @@ async def main() -> int:
                     "workspace_write", "workspace_read",
                     "folder_list", "folder_create", "folder_ensure",
                     "folder_rename", "folder_delete", "notebook_move",
+                    "run_submit", "run_status", "run_wait", "run_cancel",
                 }
                 check("MCP tool catalog", required <= names, sorted(required - names))
                 check("MCP resources listed", "nebula://notebooks" in
@@ -189,6 +191,33 @@ async def main() -> int:
                 check("run cell status ok", run["status"] == "ok", run)
                 check("run cell stdout", "3" in json.dumps(run["outputs"]), run["outputs"])
                 check("run cell persisted version", isinstance(run.get("saved_version"), int), run)
+
+                # Durable execution: an idempotent run persists beyond MCP request lifetime.
+                job_key = "mcp-acceptance-" + uuid4().hex
+                job_args = {"notebook_id": nb_id, "cell_id": x_id,
+                            "idempotency_key": job_key, "mode": "cpu",
+                            "timeout_seconds": 90}
+                job = await call(session, "run_submit", job_args)
+                check("run_submit durable id", isinstance(job.get("run_id"), str), job)
+                retry = await call(session, "run_submit", job_args)
+                check("run_submit idempotency", retry.get("run_id") == job.get("run_id"), retry)
+                state = await call(session, "run_wait", {
+                    "notebook_id": nb_id, "run_id": job["run_id"], "wait_seconds": 25
+                })
+                if state["status"] in ("queued", "running", "cancelling"):
+                    state = await call(session, "run_wait", {
+                        "notebook_id": nb_id, "run_id": job["run_id"], "wait_seconds": 25
+                    })
+                check("run_wait completed successfully", state.get("status") == "succeeded", state)
+                status = await call(session, "run_status", {
+                    "notebook_id": nb_id, "run_id": job["run_id"]
+                })
+                check("run_status returns same ID", status.get("run_id") == job["run_id"], status)
+                terminal = await call(session, "run_cancel", {
+                    "notebook_id": nb_id, "run_id": job["run_id"]
+                })
+                check("run_cancel completed job idempotent",
+                      terminal.get("status") == "succeeded", terminal)
 
                 cell_after = await call(session, "cell_get", {
                     "notebook_id": nb_id, "cell_id": x_id, "include_outputs": True
