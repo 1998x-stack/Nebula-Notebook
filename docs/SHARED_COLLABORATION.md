@@ -84,6 +84,12 @@ leakage of the owner's private folder structure.
 | Manage original grants / delete source | Yes | No | No | No |
 | Edit, share or delete personal fork | Fork owner only (and admin per current policy) | No inherited access | No inherited access | No |
 
+MCP client `cell_update(expected_version=N)` provides a stronger
+conflict guard for Agent edits to the same Cell. For compatibility, omitted
+`expected_version` retains automatic conflict retry and must not be used
+when strict no-overwrite guarantees are required. Cell add, move and delete
+still require a broader expected-version contract in a subsequent patch.
+
 The existing global admin bypass remains a *beta deployment policy*.
 Applications requiring mutually untrusted tenant separation must replace it
 with scoped organization/workspace administration. Sharing a Notebook editor
