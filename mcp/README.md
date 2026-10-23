@@ -203,6 +203,30 @@ MCP resources（支持 resources 的客户端可浏览）：
 - `nebula://notebooks`
 - `nebula://notebooks/{notebook_id}`
 
+### 长训练任务 / 可查询的 Run ID（新增）
+
+同步的 `cell_run` / `notebook_run_cells` 依然可用。对训练、超时敏感
+或可能断开客户端的任务，推荐先 `run_submit`，再 `run_status` 或
+`run_wait`。提交时必须提供**稳定且唯一的 idempotency_key**；
+同一个 key 重试只返回同一个 `run_id`，不同代码使用同一 key 会得到 409。
+
+```text
+r = run_submit(notebook_id, cell_id, idempotency_key="trial001-uuid-suffix", mode="cpu", timeout_seconds=300)
+run_id = r["run_id"]
+run_wait(notebook_id, run_id, wait_seconds=15)   # may return "running"
+run_status(notebook_id, run_id)                   # repeat until terminal
+run_cancel(notebook_id, run_id)                   # request interrupt
+```
+
+状态：`queued`、`running`、`cancelling`、`succeeded`、`failed`、
+`timed_out`、`cancelled`、`stale`、`interrupted`。服务器崩溃后未完成的
+任务标记 `interrupted`，**不会自动重新执行**；即便如此，也无法保证
+进程意外终止前的 Python 副作用已经回滚。成功/失败结果只在源码未被
+其他客户端修改时才回写相应 Cell。
+
+这是单进程 beta 的持久化任务记录，不是分布式队列，也不承诺 exactly-once
+Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_RUNS.md)。
+
 ## 5. 典型 agent 工作流
 
 ```text
@@ -280,7 +304,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **47 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **51 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -323,6 +347,11 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `cell_run_all` | `notebook_id:str`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
 | `cell_update` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `source:str | null`, `cell_type:Literal['code', 'markdown', 'raw'] | None` | `cell_id` = `null`<br>`index` = `null`<br>`source` = `null`<br>`cell_type` = `null` |
 | `code_execute` | `notebook_id:str`, `code:str`, `timeout:float`, `persist:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `False`<br>`include_data` = `False` |
+
+| `run_cancel` | `notebook_id:str`, `run_id:str` |  |
+| `run_status` | `notebook_id:str`, `run_id:str` |  |
+| `run_submit` | `notebook_id:str`, `cell_id:str`, `idempotency_key:str`, `mode:Literal['cpu', 'gpu']`, `timeout_seconds:int` | `mode` = `'cpu'`<br>`timeout_seconds` = `300` |
+| `run_wait` | `notebook_id:str`, `run_id:str`, `wait_seconds:float`, `poll_seconds:float` | `wait_seconds` = `15.0`<br>`poll_seconds` = `0.7` |
 
 ### Runtime / kernel
 

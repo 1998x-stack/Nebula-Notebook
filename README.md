@@ -109,13 +109,21 @@ Capture at 1440x900 or similar; use anonymized demo notebooks. Optimize screensh
 These illustrate current and proposed features; do not depict proposed features as shipped.
 -->
 
+### Durable code execution for agents
+
+Long-running Python cells can now be submitted through idempotent HTTP/MCP execution
+runs (`run_submit`, `run_status`, `run_wait`, `run_cancel`). The run
+record survives client disconnections; restarts mark in-progress work as
+`interrupted` rather than replaying effects. This is a single-worker beta,
+not exactly-once Python execution. See [Execution runs](docs/EXECUTION_RUNS.md).
+
 ### Use Nebula from an LLM agent (MCP)
 
-`mcp/` exposes the notebook API as a stdio MCP server with **47 tools and 2 resources**: create/import/export notebooks, organise them into folders, insert/update/delete/move cells, run cells and save outputs, `code_execute`, runtime start/stop/interrupt/diagnostics, workspace read/write at any depth, sharing and admin operations. It authenticates through the normal session/CSRF/RBAC API, so it does not add a new trust boundary.
+`mcp/` exposes the notebook API as a stdio MCP server with **51 tools and 2 resources**: create/import/export notebooks, organise them into folders, insert/update/delete/move cells, run cells and save outputs, `code_execute`, runtime start/stop/interrupt/diagnostics, workspace read/write at any depth, sharing and admin operations. It authenticates through the normal session/CSRF/RBAC API, so it does not add a new trust boundary.
 
 ```bash
 ./mcp/install-pi.sh      # register in ~/.pi/agent/mcp.json
-pi mcp list              # connected, 47 tools
+pi mcp list              # connected, 51 tools
 # Claude Desktop, Codex CLI and OpenCode configs: mcp/README.md
 mcp/.venv/bin/python mcp/test_mcp.py
 ```
@@ -151,7 +159,7 @@ For a fresh install, use [Deployment guide](docs/DEPLOYMENT.md), [FAQ](docs/FAQ.
 | Compute | Your Docker host, CPU + optional NVIDIA GPU | Google-managed runtimes, eligibility-dependent accelerators | Configurable server/kernel infrastructure |
 | File format | Jupyter `.ipynb` | Jupyter `.ipynb` | Jupyter `.ipynb` |
 | Team permissions | Admin + owner/editor/viewer | Platform-specific sharing | Depends on deployment and add-ons |
-| Agent integration | MCP stdio server with 47 tools | Product-integrated AI features | MCP / extensions |
+| Agent integration | MCP stdio server with 51 tools | Product-integrated AI features | MCP / extensions |
 | General-purpose multi-tenant safety | Not production-hardened | Managed by provider | Depends on deployment |
 
 Nebula Notebook is an **independent project**, not affiliated with or endorsed by Google or Project Jupyter. “Colab” and “Jupyter” are trademarks of their respective owners. [Read a more detailed comparison →](docs/COMPARISON.md).

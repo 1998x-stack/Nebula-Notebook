@@ -388,6 +388,43 @@ async def cell_move(notebook_id: str, new_index: int, cell_id: str | None = None
         notebook_id, new_index=new_index, cell_id=cell_id, index=index)
 
 
+# Durable jobs keep running even when an MCP request ends. Use for training/long cells.
+@mcp.tool(annotations=EXECUTE)
+async def run_submit(notebook_id: str, cell_id: str, idempotency_key: str,
+                     mode: Literal["cpu", "gpu"] = "cpu", timeout_seconds: int = 300) -> dict:
+    """Submit a code cell asynchronously with a caller-generated idempotency key.
+
+    Reuse the SAME key when retrying a network error. Submitting never blocks
+    on GPU training; call run_status or run_wait to inspect completion. The
+    backend never automatically replays interrupted Python on restart.
+    """
+    _require_write("run_submit")
+    return await _with_hints(client.submit_run(
+        notebook_id, cell_id, idempotency_key,
+        mode=mode, timeout_seconds=timeout_seconds))
+
+
+@mcp.tool(annotations=READ)
+async def run_status(notebook_id: str, run_id: str) -> dict:
+    """Read durable job state, bounded outputs and stored source hash."""
+    return await client.get_run(notebook_id, run_id)
+
+
+@mcp.tool(annotations=READ)
+async def run_wait(notebook_id: str, run_id: str,
+                   wait_seconds: float = 15.0, poll_seconds: float = 0.7) -> dict:
+    """Wait at most 30 seconds for an EXISTING run; never resubmit code."""
+    return await client.wait_run(notebook_id, run_id, wait_seconds, poll_seconds)
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def run_cancel(notebook_id: str, run_id: str) -> dict:
+    """Request cancellation; status='cancelling' is NOT proof of kernel stop."""
+    _require_write("run_cancel")
+    return await client.cancel_run(notebook_id, run_id)
+
+
+
 # --------------------------------------------------------------------------
 # Execution
 # --------------------------------------------------------------------------
