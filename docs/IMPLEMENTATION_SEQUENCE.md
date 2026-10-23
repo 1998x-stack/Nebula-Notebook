@@ -131,20 +131,30 @@ tasks; do not advertise them as shipped.
 
 See [P0-F operations and acceptance](STORAGE_RELIABILITY.md).
 
-## P1-A — Autoresearch engine
+## P1-A — Run-backed Autoresearch Research Ledger (foundation implemented; host acceptance pending)
 
-Build only after P0 passes: `Experiment`, `Trial`, `EvaluationSpec`,
-`Metric`, `Artifact`, `Checkpoint`. Immutable evaluation rules, dataset
-hashes, code hash, image digest, seed, metric direction and fixed time budget.
-Trial runner creates a run ID, records metadata, inspects outputs, compares
-a validated metric, and retains or rejects candidate code. Recovery resumes
-the *plan* from a known completed trial, never silently repeats an unknown
-GPU training job. Use `examples/autoresearch-prompt.txt` as a human-readable
-prototype, not an executor.
+A SQLite v3 migration adds immutable Experiment protocol, Run-backed Trials,
+validated metric ranking, Checkpoint pointers to immutable Notebook versions
+and authenticated SHA-256 artifacts (8 MB limit). `research_create` freezes
+evaluator source SHA, metric name/direction, asserted dataset/environment
+digests, execution mode, timeout and max 1–20 Trial budget. Candidate Run IDs
+and code-source SHA are cross-checked against retained Notebook revisions.
+The evaluator Run must have the frozen source SHA and finish successfully
+after the candidate Run; no arbitrary Agent-supplied metric is accepted.
+The ledger never replays interrupted training and provides explicit recovery
+instructions and Run status. Pi/Codex/Claude/OpenCode share nine MCP tools.
 
-**Gate:** reproducible baseline, fixed evaluator, 3–5 bounded trials, output
-comparison, best-trial artifact, recovery and stop conditions. Do not claim
-equivalence to upstream autoresearch on a different evaluator/hardware.
+[Research Engine MVP protocol](RESEARCH_ENGINE.md) and
+[Agent prompt](../examples/autoresearch-prompt.txt).
+
+**Gate:** backend tests and GitHub CI; real CPU Docker, two accounts + Pi MCP
+and browser, mid-run API restart and result/Artifact restore remain manual.
+
+**Still needed:** independently sandboxed evaluator and read-only validated
+datasets, hardware/environment attestation, isolated Trial Kernel state,
+automated bounded trial scheduler, large Artifact storage/retention, accurate
+device time budgets and actual GPU benchmarks. Do not claim the upstream
+autoresearch val_bpb benchmark has been reproduced.
 
 ## P1-B — Multi-kernel
 
