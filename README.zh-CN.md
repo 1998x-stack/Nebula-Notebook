@@ -23,6 +23,20 @@
 | Agent 接入 | 54-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
 | 运维 | Ubuntu 检测、部署脚本、冒烟测试与 CI |
 
+## P0-E：冲突恢复、三方合并与私人草稿 Fork
+
+两个注册用户或 Agent 同时修改共享 Notebook 时，已支持
+**base（原始版本）/ mine（当前草稿）/ latest（共享最新版）** 三方比较。
+不同 Cell 的修改可安全合并；同一 Cell 的重叠编辑、删除与修改冲突，
+或相互矛盾的移动需要明确选择保留哪一方。HTTP 409 不再迫使
+浏览器丢弃尚未保存的草稿，也可以另存为独立的私人 Fork。
+
+新的 MCP 工具为 `notebook_merge_preview`、`notebook_merge_commit`
+和 `notebook_fork_draft`。合并写入具有严格版本 CAS、操作 ID 幂等、
+历史快照和 SSE 实时同步保障，但不等于 CRDT 逐字符共写。
+
+[冲突恢复协议、权限和验收标准](docs/COLLABORATION_MERGE.md)
+
 ## P0-D：执行生命周期与异常恢复强化
 
 已把 Run 结束状态和 `run.finished` SSE 事件合并到同一数据库事务，
