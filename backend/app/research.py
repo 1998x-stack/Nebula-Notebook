@@ -89,8 +89,6 @@ async def create_experiment(db: AsyncSession, notebook: Notebook, actor_id: str,
     cell = _cell(notebook.document, body.evaluator_cell_id)
     if cell is None:
         _problem('Evaluator must be an existing code Cell')
-    if len(set([body.dataset_sha256, body.environment_sha256])) != 2:
-        _problem('Dataset and environment SHA-256 values must describe different inputs')
     evaluator_sha = sha256(source_text(cell['source']))
     protocol = {
         'evaluator_sha256': evaluator_sha,
