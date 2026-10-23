@@ -113,7 +113,8 @@ async def test_delete_vs_modify_is_conflict_and_explicit_deletion_possible(clien
     merged=await commit(clients,h,nb['id'],1,2,mine,
                         resolutions={'cell:'+cid:'mine'})
     assert merged.status_code==200
-    assert cid not in [c['id'] for c in merged.json()['document']['cells']]
+    saved=(await clients.get(f"/api/notebooks/{nb['id']}")).json()
+    assert cid not in [c['id'] for c in saved['document']['cells']]
 
 
 async def test_concurrent_additions_and_reordering_are_deterministic(clients):
