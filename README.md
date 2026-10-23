@@ -144,6 +144,25 @@ Capture at 1440x900 or similar; use anonymized demo notebooks. Optimize screensh
 These illustrate current and proposed features; do not depict proposed features as shipped.
 -->
 
+### Run-backed, reproducible Agent experiments (P1-A)
+
+The **Agent research ledger** links each bounded Trial to a real managed Run
+and an immutable Notebook source version. Freeze an evaluator Cell's source
+hash, primary metric/direction, asserted dataset + environment SHA-256 hashes,
+CPU/GPU mode and trial budget. A score is recorded only after the candidate
+and unchanged evaluator Runs **actually succeeded**. Nebula ranks verified
+metrics, retains candidate-version Checkpoints and stores immutable SHA-256
+Artifacts up to 8 MB. Pi, Claude, Codex and OpenCode access these through nine
+`research_*` MCP tools and `examples/autoresearch-prompt.txt`.
+
+**Current boundary:** data/environment hashes are operator assertions, not
+independently attested container/dataset snapshots; candidate Python shares a
+mutable Kernel with evaluation. This is an auditable, finite experiment ledger,
+**not** hermetic evaluation, automatic GPU optimization or a reproduction of
+upstream autoresearch's reported results.
+
+[Research engine, protocol and examples →](docs/RESEARCH_ENGINE.md).
+
 ### Durable history, backup and event replay recovery (P0-F)
 
 P0-F introduces **versioned SQLite migrations**, per-Notebook SSE retention
@@ -154,7 +173,7 @@ keeping any unsaved draft available for P0-E conflict resolution.
 
 Historical Notebook revisions are **not pruned automatically**: any retained
 version can still be Forked or used as a three-way merge base. Event compaction
-is manual and disabled by default. Artifact object storage, snapshot
+is manual and disabled by default. Large-Artifact object storage, snapshot
 compression and hosted multi-tenant quotas are still outstanding.
 
 [Storage reliability, backup and restoration runbook →](docs/STORAGE_RELIABILITY.md).
