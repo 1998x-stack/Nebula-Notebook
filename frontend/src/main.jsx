@@ -510,6 +510,10 @@ function NotebookEditor({id,user,back,logout}) {
      ]);
      if(revisions.current!==at){setMergePreview(null);setMergeError('Draft changed during preview. Preview again before committing.');return;}
      mergePreviewRevisionRef.current=at;
+     if(current.version!==plan.latest_version){
+       setMergePreview(null);setMergeError('The shared Notebook changed during preview. Preview again.');
+       return;
+     }
      setMergePreview(plan);setMergeTheirs(current);
      if(mergeOperationRef.current?.latest_version!==plan.latest_version)
        mergeOperationRef.current=null;
@@ -608,7 +612,12 @@ function NotebookEditor({id,user,back,logout}) {
          </div>}
          <label>Resolve this conflict
            <select value={mergeChoices[conflict.key]||''} onChange={e=>{
-             setMergeChoices(prev=>({...prev,[conflict.key]:e.target.value}));
+             setMergeChoices(prev=>{
+               const next={...prev};
+               if(e.target.value)next[conflict.key]=e.target.value;
+               else delete next[conflict.key];
+               return next;
+             });
              setMergePreview(previous=>previous?{...previous,can_merge:false}:previous);mergeOperationRef.current=null;
            }}>
              <option value="">Choose explicitly</option><option value="mine">Keep my change</option><option value="theirs">Keep latest shared change</option>
