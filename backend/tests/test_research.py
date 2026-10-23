@@ -206,3 +206,43 @@ async def test_trial_metric_parser_rejects_multiple_or_nonfinite_records():
     assert parse_metric([{'output_type':'stream','name':'stdout',
                          'text':'NEBULA_METRIC: {"name":"val_loss","value":0.25}\n'}],
                         'val_loss')==0.25
+
+async def test_metric_leaderboard_rejects_worse_trial_and_preserves_best(clients,monkeypatch):
+    h,nb,e,_=await prepare(clients,monkeypatch,max_trials=3)
+    async def one(index, score):
+        run_id=await submit(clients,h,nb['id'],'train-cell',f'candidate-metric-{index:03d}')
+        t=(await trial(clients,h,nb,e,run_id,f'trial-metric-{index:03d}')).json()
+        await complete_run(run_id)
+        evaluation=await submit(clients,h,nb['id'],'example',f'evaluator-metric-{index:03d}')
+        await complete_run(evaluation,score=score,start=utcnow())
+        result=await finish(clients,h,nb,e,t,evaluation)
+        assert result.status_code==200,result.text
+        return result.json()
+    best=await one(1,0.5)
+    worse=await one(2,0.8)
+    assert best['decision']=='keep'
+    assert worse['decision']=='reject'
+    overview=(await clients.get(f"/api/notebooks/{nb['id']}/research/{e['id']}")).json()
+    assert overview['best_trial_id']==best['id']
+    assert [x['metric_value'] for x in overview['leaderboard']]==[0.5,0.8]
+    assert overview['remaining_trials']==1
+    assert len(overview['checkpoints'])==1
+    assert overview['trials'][0]['candidate_run_status']=='succeeded'
+    assert overview['trials'][0]['evaluator_run_status']=='succeeded'
+
+
+async def test_evaluator_digest_mismatch_cannot_forge_result(clients,monkeypatch):
+    h,nb,e,_=await prepare(clients,monkeypatch)
+    run_id=await submit(clients,h,nb['id'],'train-cell','candidate-forged-001')
+    t=(await trial(clients,h,nb,e,run_id,'trial-forged-0001')).json()
+    await complete_run(run_id)
+    evaluator=await submit(clients,h,nb['id'],'example','eval-forged-00001')
+    await complete_run(evaluator,score=0.001,start=utcnow())
+    async with SessionLocal() as db:
+        row=await db.get(ExecutionRun,evaluator)
+        row.source_sha256='f'*64
+        await db.commit()
+    assert (await finish(clients,h,nb,e,t,evaluator)).status_code==409
+    overview=(await clients.get(f"/api/notebooks/{nb['id']}/research/{e['id']}")).json()
+    assert overview['best_trial_id'] is None
+    assert overview['trials'][0]['status']=='recorded'
