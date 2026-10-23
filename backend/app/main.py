@@ -159,6 +159,13 @@ class MergePreview(BaseModel):
     resolutions: dict[str, Literal['mine', 'theirs']] = Field(default_factory=dict)
 
 
+class ForkDraft(BaseModel):
+    base_version: int = Field(ge=1)
+    mine_title: str = Field(min_length=1, max_length=200)
+    mine_document: dict
+    folder_id: str | None = None
+
+
 class MergeCommit(MergePreview):
     expected_latest_version: int = Field(ge=1)
     operation_id: str = Field(min_length=8, max_length=128)
@@ -506,6 +513,38 @@ async def mutate_cell(notebook_id: str, body: CellMutation,
     """Strict CAS for every add/update/delete/move; same operation ID is replay-safe."""
     nb, _ = await require_notebook(db, notebook_id, actor, 'editor')
     return await apply_cell_operation(db, nb, actor.id, body)
+
+
+@app.post('/api/notebooks/{notebook_id}/merge/fork-draft')
+async def fork_unsaved_draft(notebook_id: str, body: ForkDraft,
+                            db: AsyncSession = Depends(get_db),
+                            actor=Depends(csrf_user)):
+    """Preserve an unresolved draft as an independent private Notebook.
+
+    Does not publish a draft into the shared source and never copies Kernel
+    memory, workspace files, or source permissions.
+    """
+    source, _ = await require_notebook(db, notebook_id, actor, 'editor')
+    if body.base_version > source.version:
+        raise HTTPException(422, 'Base cannot be newer than the shared source')
+    if body.folder_id:
+        await require_folder(db, body.folder_id, actor)
+    document = checked_document(body.mine_document)
+    new_name = body.mine_title[:193] + ' (draft)' if len(body.mine_title) > 193 else body.mine_title + ' (draft)'
+    fork = Notebook(id=str(uuid4()), owner_id=actor.id, title=new_name,
+                    folder_id=body.folder_id, document=document, version=1,
+                    document_bytes=document_size(document),
+                    forked_from_notebook_id=source.id,
+                    forked_from_version=body.base_version)
+    db.add(fork)
+    snapshot(db, fork, version=1, title=new_name, document=document,
+             author_id=actor.id, reason='fork')
+    append_event(db, fork.id, 'document.committed', actor_id=actor.id,
+                 version=1, payload={'full_sync': True})
+    log_event(db, actor.id, 'notebook.fork_draft', fork.id,
+              f'{notebook_id}@{body.base_version}')
+    await db.commit()
+    return await document_payload(db, fork, 'owner')
 
 
 @app.post('/api/notebooks/{notebook_id}/merge/preview')
