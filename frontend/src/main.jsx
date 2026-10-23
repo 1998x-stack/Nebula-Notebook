@@ -314,7 +314,8 @@ function NotebookEditor({id,user,back,logout}) {
  const canEdit = !!entry && entry.role!=='viewer';
  const [folderCrumb,setFolderCrumb]=useState(null);
  const [historyOpen,setHistoryOpen]=useState(false),[historyRows,setHistoryRows]=useState([]),
-       [selectedVersion,setSelectedVersion]=useState(''),[forking,setForking]=useState(false);
+       [selectedVersion,setSelectedVersion]=useState(''),[forking,setForking]=useState(false),
+       [hasOlderHistory,setHasOlderHistory]=useState(false),[historyLoading,setHistoryLoading]=useState(false);
  function editDoc(fn){setDoc(prev=>{const next=typeof fn==='function'?fn(prev):fn;latestDoc.current=next;return next});revisions.current++;dirtyRef.current=true;setRevision(revisions.current);setDirty(true)}
  function updateCell(index,patch){editDoc(d=>({...d,cells:d.cells.map((c,i)=>i===index?{...c,...patch}:c)}))}
  const fetchRuntime=useCallback(async()=>{try{setRuntime(await api(`/notebooks/${id}/runtime`))}catch{}},[id]);
@@ -381,8 +382,18 @@ function NotebookEditor({id,user,back,logout}) {
  async function runAll(){if(!doc)return;for(const c of doc.cells){if(c.cell_type==='code')run(c)} }
  async function openHistory(){
    setHistoryOpen(true);setError('');
-   try { const rows=await api(`/notebooks/${id}/versions?limit=100`);setHistoryRows(rows);setSelectedVersion(String(rows[0]?.version||'')); }
+   try { const rows=await api(`/notebooks/${id}/versions?limit=100`);setHistoryRows(rows);setSelectedVersion(String(rows[0]?.version||''));setHasOlderHistory(rows.length===100&&rows[rows.length-1].version>1); }
    catch(e){setError(e.message)}
+ }
+ async function loadOlderVersions(){
+   const oldest=historyRows[historyRows.length-1]?.version;
+   if(!oldest||oldest<=1||historyLoading)return;
+   setHistoryLoading(true);
+   try{
+     const older=await api(`/notebooks/${id}/versions?limit=100&before=${oldest}`);
+     setHistoryRows(previous=>[...previous,...older]);
+     setHasOlderHistory(older.length===100&&older[older.length-1].version>1);
+   }catch(e){setError(e.message)}finally{setHistoryLoading(false)}
  }
  async function forkVersion(){
    if(!selectedVersion||forking)return;
@@ -409,6 +420,8 @@ function NotebookEditor({id,user,back,logout}) {
      {historyRows.map(r=><option key={r.version} value={r.version}>v{r.version} · {r.reason} · {r.created_at?new Date(r.created_at).toLocaleString():'Saved snapshot'}</option>)}
    </select></label>
    {historyRows.length===0&&<p className="muted">No saved versions available.</p>}
+   {hasOlderHistory&&<HeaderButton onClick={loadOlderVersions} disabled={historyLoading}>{historyLoading?'Loading...':'Load older versions'}</HeaderButton>}
+   {error&&<div className="alert"><AlertCircle size={16}/>{error}</div>}
    <div className="modal-actions"><HeaderButton onClick={()=>setHistoryOpen(false)}>Cancel</HeaderButton><HeaderButton className="primary" disabled={!selectedVersion||forking} onClick={forkVersion}>{forking?'Forking...':'Fork selected version'}</HeaderButton></div>
  </div></Modal>}
  {sharing&&<ShareDialog id={id} onClose={()=>setSharing(false)}/>}
