@@ -81,6 +81,31 @@ class Runtime(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+
+class ExecutionRun(Base):
+    """At-most-once submission record. A crash never silently replays Python code."""
+    __tablename__ = 'execution_runs'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    notebook_id: Mapped[str] = mapped_column(ForeignKey('notebooks.id'), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    cell_id: Mapped[str] = mapped_column(String(80))
+    idempotency_key: Mapped[str] = mapped_column(String(128))
+    mode: Mapped[str] = mapped_column(String(8), default='cpu')
+    timeout_seconds: Mapped[int] = mapped_column(Integer, default=300)
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    source_code: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(24), default='queued')
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    execution_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outputs: Mapped[list] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint('notebook_id', 'actor_id', 'idempotency_key',
+                                      name='uq_execution_run_idempotency'),)
+
+
 class Audit(Base):
     __tablename__ = 'audits'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
