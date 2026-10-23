@@ -123,6 +123,16 @@ class ExecutionRun(Base):
                                       name='uq_execution_run_idempotency'),)
 
 
+class KernelGate(Base):
+    """Single active Kernel dispatch owner per Notebook; restart state is uncertain."""
+    __tablename__ = 'kernel_gates'
+    notebook_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    token: Mapped[str] = mapped_column(String(160))
+    kind: Mapped[str] = mapped_column(String(16))
+    state: Mapped[str] = mapped_column(String(16), default='active')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class CellOperation(Base):
     """One immutable operation result per Notebook/op ID, independent of Agent."""
     __tablename__ = 'cell_operations'
