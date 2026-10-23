@@ -341,7 +341,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **56 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **57 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -364,6 +364,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `notebook_delete` | `notebook_id:str` |  |
 | `notebook_export` | `notebook_id:str`, `path:str`, `overwrite:bool` | `overwrite` = `True` |
 | `notebook_fork` | `notebook_id:str`, `version:int`, `title:str | null`, `folder_id:str | null` | `title` = `null`<br>`folder_id` = `null` |
+| `notebook_fork_draft` | `notebook_id:str`, `base_version:int`, `mine_title:str`, `mine_document:dict`, `operation_id:str`, `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_get` | `notebook_id:str`, `include_outputs:bool`, `include_data:bool` | `include_outputs` = `False`<br>`include_data` = `False` |
 | `notebook_import` | `path:str`, `title:str | null` | `title` = `null` |
 | `notebook_list` | `folder_id:str | null` | `folder_id` = `null` |
