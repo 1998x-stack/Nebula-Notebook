@@ -369,7 +369,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `cell_move` | `notebook_id:str`, `new_index:int`, `cell_id:str | null`, `index:int | null` | `cell_id` = `null`<br>`index` = `null` |
 | `cell_run` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `timeout:float`, `persist:bool`, `include_data:bool` | `cell_id` = `null`<br>`index` = `null`<br>`timeout` = `60`<br>`persist` = `True`<br>`include_data` = `False` |
 | `cell_run_all` | `notebook_id:str`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
-| `cell_update` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `source:str | null`, `cell_type:Literal['code', 'markdown', 'raw'] | None` | `cell_id` = `null`<br>`index` = `null`<br>`source` = `null`<br>`cell_type` = `null` |
+| `cell_update` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `source:str | null`, `cell_type:Literal['code', 'markdown', 'raw'] | None`, `expected_version:int | null` | `cell_id` = `null`<br>`index` = `null`<br>`source` = `null`<br>`cell_type` = `null`<br>`expected_version` = `null` |
 | `code_execute` | `notebook_id:str`, `code:str`, `timeout:float`, `persist:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `False`<br>`include_data` = `False` |
 | `run_cancel` | `notebook_id:str`, `run_id:str` |  |
 | `run_status` | `notebook_id:str`, `run_id:str` |  |
