@@ -1,0 +1,22 @@
+const { chromium } = require('playwright');
+const BASE = process.env.NEBULA_LAN_BASE || 'http://127.0.0.1:8000';
+(async () => {
+  const browser = await chromium.launch({ headless:true, args:['--no-sandbox'] });
+  const page = await browser.newPage({ viewport:{width:1440,height:1000} });
+  const errors=[]; page.on('pageerror', e=>errors.push(String(e)));
+  await page.goto(BASE, { waitUntil:'domcontentloaded' });
+  await page.waitForSelector('.login-card');
+  await page.locator('input[type=email]').fill(process.env.ADMIN_EMAIL);
+  await page.locator('input[type=password]').fill(process.env.ADMIN_PASSWORD);
+  await page.locator('button[type=submit]').click();
+  await page.waitForSelector('.dashboard');
+  await page.locator('.nb-card').first().click();
+  await page.waitForSelector('.editor-shell');
+  await page.waitForTimeout(3000);
+  console.log('errors', errors);
+  console.log('buttons', await page.locator('button').evaluateAll(bs=>bs.map(b=>({t:b.textContent.trim(),c:b.className,d:b.disabled}))));
+  console.log('toolbar html', (await page.locator('.editor-toolbar').innerHTML().catch(()=> 'NO TOOLBAR')).slice(0,1200));
+  console.log('body', (await page.locator('body').innerText()).slice(0,400));
+  await page.screenshot({ path:'../screenshots/12-lan-inspect.png', fullPage:true });
+  await browser.close();
+})();

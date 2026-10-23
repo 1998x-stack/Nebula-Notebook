@@ -8,3 +8,4 @@ data/
 *.pyc
 *.sqlite*
 .DS_Store
+logs/
