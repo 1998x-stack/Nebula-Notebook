@@ -43,4 +43,5 @@ jobs:
       - name: Test bounded variable inspector
         run: PYTHONPATH=mcp python -m unittest discover -s mcp -p 'test_variable_probe.py' -v
       - name: Verify generated tool reference
-        run: python mcp/gen_tool_reference.py --check
+        run: |
+          python mcp/gen_tool_reference.py --check || (python mcp/gen_tool_reference.py; git diff -- mcp/README.md; exit 1)
