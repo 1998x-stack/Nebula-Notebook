@@ -238,6 +238,33 @@ Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_R
 比较改动或从历史版本 Fork。未传 expected_version 时，MCP 会读取
 当前版本作为该次操作的基线，不会自行在冲突后自动改写。
 
+### P1-A: bounded reproducible research ledger (nine tools)
+
+`research_create` freezes the *source hash* of an existing evaluator Cell,
+metric direction, asserted dataset + environment digests, mode, timeout and
+up to 20 Trial registrations. `research_list`/`research_get` provide
+leaderboard, best checkpoint, remaining budget and actual stored Run statuses.
+
+Use `run_submit` on the candidate Cell with a stable key, then
+`research_trial_register` with the same Run ID, its saved Notebook version
+and a unique stable trial key. Wait for candidate `succeeded`. Execute
+the *unchanged evaluator* via a separate `run_submit`, wait for success,
+and call `research_trial_finalize` with its actual Run ID. The server
+extracts exactly one tagged `NEBULA_METRIC` JSON stdout value, rather than
+trusting an Agent-claimed score; it preserves candidate version Checkpoints
+when a validated metric improves.
+
+`research_artifacts`, `research_artifact_upload` and
+`research_artifact_download` manage up to 8 MB per immutable SHA-256 blob,
+scoped by registered Notebook ACL. `research_close` prevents new Trial
+registrations (but does not cancel active Runs).
+
+**Limitations:** no automatic trial execution scheduler, isolated evaluation,
+attested dataset contents, or indefinite autoresearch loop. A Kernel error,
+interrupted job or nonfinite metric must not be silently retried with a new
+run key. See [the protocol](../docs/RESEARCH_ENGINE.md) and
+[Agent prompt](../examples/autoresearch-prompt.txt).
+
 ### P0-E: explicit conflict recovery and private draft Fork
 
 A shared Editor/Agent may use `notebook_merge_preview` to compare an unsaved
@@ -359,7 +386,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **57 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **66 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -393,6 +420,20 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `notebook_run_cells` | `notebook_id:str`, `start:int`, `count:int`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `start` = `0`<br>`count` = `5`<br>`timeout` = `120`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
 | `notebook_version` | `notebook_id:str`, `version:int` |  |
 | `notebook_versions` | `notebook_id:str`, `limit:int`, `before:int | null` | `limit` = `50`<br>`before` = `null` |
+
+### 研究实验
+
+| Tool | 参数 | 默认 |
+|---|---|---|
+| `research_artifact_download` | `notebook_id:str`, `experiment_id:str`, `artifact_id:str`, `path:str`, `overwrite:bool` | `overwrite` = `False` |
+| `research_artifact_upload` | `notebook_id:str`, `experiment_id:str`, `trial_id:str`, `path:str`, `name:str | null` | `name` = `null` |
+| `research_artifacts` | `notebook_id:str`, `experiment_id:str` |  |
+| `research_close` | `notebook_id:str`, `experiment_id:str` |  |
+| `research_create` | `notebook_id:str`, `title:str`, `evaluator_cell_id:str`, `metric_name:str`, `direction:Literal['min', 'max']`, `dataset_sha256:str`, `environment_sha256:str`, `max_trials:int`, `trial_timeout_seconds:int`, `mode:Literal['cpu', 'gpu']` | `max_trials` = `5`<br>`trial_timeout_seconds` = `300`<br>`mode` = `'cpu'` |
+| `research_get` | `notebook_id:str`, `experiment_id:str` |  |
+| `research_list` | `notebook_id:str` |  |
+| `research_trial_finalize` | `notebook_id:str`, `experiment_id:str`, `trial_id:str`, `evaluator_run_id:str` |  |
+| `research_trial_register` | `notebook_id:str`, `experiment_id:str`, `trial_key:str`, `run_id:str`, `notebook_version:int`, `hypothesis:str` |  |
 
 ### Cell 与执行
 

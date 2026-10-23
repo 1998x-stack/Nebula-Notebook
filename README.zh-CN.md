@@ -20,8 +20,26 @@
 | 多账号共享 | 同一个 Notebook ID 授权多人编辑，首页单独的 Shared with me 视图 |
 | 历史版本 & 私人 Fork | 成功保存自动生成历史快照；可从任意已保存版本创建自己的独立 Notebook |
 | 持久化 | SQLite、文档版本控制、ipynb 导入导出、工作目录 |
-| Agent 接入 | 57-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
+| Agent 接入 | 66-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
 | 运维 | Ubuntu 检测、部署脚本、冒烟测试与 CI |
+
+## P1-A：Agent Research Engine — 可审计实验闭环
+
+实验协议在创建时锁定 **评估 Cell 源码 SHA-256、指标名称和方向、
+数据集／环境摘要、执行模式与次数预算**。每项 Trial 引用真实持久化
+Run ID 与 Notebook 不可变版本；只有候选和固定评估 Run 都确认成功，
+系统才解析评估输出中的指标，生成排名、改进决策和 Checkpoint。
+Artifact 以 SHA-256 寻址，当前单文件上限 8 MB。
+
+Pi、Claude、Codex、OpenCode 可通过新增的 9 个 `research_*` MCP
+工具开展有限轮试验，配合 `examples/autoresearch-prompt.txt`。
+断线后读取既有 Run/Trial 状态，**不会自动重复执行未知结果的 Python**。
+
+这是研究记录和可追溯 MVP；数据和环境 SHA 仍由使用者提供，
+评估 Kernel 尚未与候选代码彻底隔离，不应宣称已实现不可篡改的
+科学评估或复现上游 GPU Autoresearch。
+
+[研究引擎使用与验收指南](docs/RESEARCH_ENGINE.md)。
 
 ## P0-F：持久化事件、备份恢复和数据库迁移
 

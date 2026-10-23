@@ -1,53 +1,88 @@
-# Nebula Notebook × autoresearch — bounded MCP agent instruction
-# Copy into your trusted coding agent (Pi, Codex, Claude, OpenCode) with Nebula MCP connected.
-# Inspired by https://github.com/karpathy/autoresearch; this is an ADAPTATION, not its program.md.
+# Nebula Notebook × Agent Autoresearch — P1-A bounded, evidence-backed workflow
+# Copy into a trusted Pi / Claude / Codex / OpenCode Agent with Nebula MCP installed.
+# Inspired by https://github.com/karpathy/autoresearch (adaptation, not upstream benchmark).
 
-GOAL: Conduct a reproducible, measurable notebook experiment loop, using Nebula MCP to
-create and update notebook cells and inspect run outputs. Do not claim this is the
-upstream five-minute LLM benchmark until the original code/environment is reproduced.
+ROLE
+Operate as a cautious autonomous researcher collaborating with humans through
+Nebula Notebook. Do not invent metrics, report unverified results as improvements,
+or resubmit unknown Python side effects. Keep work visible in /notebook/<id>.
 
-PRE-FLIGHT (ask before starting):
-1. Agree on objective, primary metric, direction (min/max), baseline, train/validation
-   split, resource/time budget, maximum iterations (default 5), and allowed file paths.
-2. Confirm what is immutable (datasets, evaluation, random seeds, environment,
-   metric computation). Never rewrite evaluation to make the metric look better.
-3. Check nebula_health, nebula_capabilities and runtime_quota. Choose CPU unless
-   verified GPU is essential and explicitly available. Do not assume a Mac MPS device
-   is available inside a Linux Docker container.
-4. Create one notebook "autoresearch — <run tag>" with Markdown cells containing
-   hypothesis, immutable configuration, the baseline and a results table.
-5. When adapting the original karpathy/autoresearch, keep prepare.py and its
-   evaluate_bpb untouched, train.py as the only experiment file; use its exact
-   evaluation protocol and fixed five-minute training budget on supported hardware.
-   Do not expect the base Nebula GPU container to include the entire upstream
-   autoresearch environment. Verify dependencies and a real GPU before any trial.
+PREPARE AND FREEZE (ask the human to confirm)
+1. Agree on research hypothesis, candidate Cell ID, fixed evaluator Cell ID,
+   primary metric name and direction (min/max), data split, immutable dataset,
+   environment, random seed, Python packages, resource mode (CPU or verified GPU),
+   per-Trial timeout (<=1800 s) and a finite max_trials (1..20; default 5).
+2. Obtain SHA-256 of the actual dataset and environment manifest from trusted
+   sources; keep the files read-only if possible. The Nebula P1-A MVP merely
+   records these digests; it cannot attest arbitrary kernel filesystem changes.
+3. Create the evaluator code Cell *before* creating the experiment. Keep its
+   source stable for the entire protocol. It must compute the held-out metric
+   independently and print exactly one valid stdout record:
+       NEBULA_METRIC: {"name":"val_loss","value":0.123456}
+   (replace val_loss with the agreed metric). No NaN/Infinity, duplicate record,
+   or untrusted score pasted in by an Agent.
+4. Call research_create(notebook_id, title, evaluator_cell_id, metric_name,
+   direction, dataset_sha256, environment_sha256, max_trials,
+   trial_timeout_seconds, mode). Record experiment_id and protocol_sha256.
+5. Record notebook_get version, hardware, package versions and dataset manifest
+   in a Markdown Cell. Do not silently alter the frozen evaluator or input data.
 
-MCP LOOP (maximum iterations as agreed; do not run unbounded):
-A. notebook_get -> record notebook version, stable cell IDs, and metric baseline.
-B. Write one small, testable hypothesis into a Markdown cell via cell_add.
-C. Make one controlled change in the experiment code using cell_update. Save a
-   content digest of the changed code and note dataset/environment identifiers.
-D. cell_run (or notebook_run_cells for a bounded window), then inspect the outputs.
-   If a call times out, treat it as UNKNOWN, check runtime_status and outputs;
-   do not automatically launch a duplicate long GPU job.
-E. kernel_variables(names=[...]) ONLY for specific nonsecret names when the Python
-   runtime is ready; inspect shape/dtype/device, not giant tensor contents.
-F. Record metric, elapsed time, machine/runtime mode, code digest, status,
-   error summary, and pass/fail versus baseline in a results table.
-G. Only mark an improvement as "keep" if the immutable evaluator succeeded
-   and the difference satisfies the agreed metric criterion. Otherwise mark "reject".
-H. Do not silently overwrite prior outputs or remove cells. Keep an immutable
-   trial record before changing the next experiment. Stop on repeated failures.
+REPEAT, AT MOST max_trials TIMES
+A. Read research_get and notebook_get. Inspect Trial/Run statuses and remaining
+   budget. Do not begin a second candidate if there is an uncertain earlier Run.
+B. Form a specific hypothesis and modify only the candidate Cell using
+   cell_update(..., expected_version=..., operation_id=UNIQUE_ID).
+   Handle 409 through notebook_merge_preview / notebook_fork_draft.
+C. Read notebook_get *after saving* and remember that immutable version N
+   and the exact candidate Cell ID and source digest.
+D. Call run_submit(notebook_id, candidate_cell_id,
+   idempotency_key=STABLE_CANDIDATE_KEY, mode, timeout_seconds) once.
+   Call research_trial_register(notebook_id, experiment_id,
+   trial_key=UNIQUE_STABLE_TRIAL_KEY, run_id=returned_run_id,
+   notebook_version=N, hypothesis=...). On network retries, reuse exact keys.
+E. Poll run_wait / run_status. If candidate ends as failed, interrupted, stale,
+   cancelled or timed_out, STOP this Trial without fabricating a metric.
+   Inspect the logs and runtime_diagnose. Never automatically start a second
+   GPU training attempt with a different key.
+F. After candidate Run status is exactly succeeded, ensure the evaluator Cell
+   remains unchanged. Submit that Cell with a NEW stable evaluator Run key:
+   run_submit(notebook_id, evaluator_cell_id, idempotency_key=EVAL_KEY,
+              mode=original_mode, timeout_seconds=original_timeout).
+   Wait for confirmed succeeded. It must start after candidate finished.
+G. Call research_trial_finalize(notebook_id, experiment_id, trial_id,
+   evaluator_run_id=actual_evaluator_run_id).
+   Nebula parses the REAL evaluator Run stdout and records the metric,
+   a keep/reject decision, immutable candidate Notebook version, and a
+   checkpoint pointer if it improves the validated score. Agent cannot
+   supply an arbitrary metric value to finalize.
+H. If a bounded plot or log is valuable, use research_artifact_upload with
+   a path within NEBULA_MCP_FS_ROOT (<=8 MB), then research_artifacts to
+   confirm the SHA-256 manifest. Do not upload secrets.
+I. Call research_get to review leaderboard, current best, checkpoint history,
+   remaining budget, and *actual* candidate/evaluation Run statuses.
+   Describe whether the fixed metric genuinely improved; do not claim
+   statistical significance without proper repeated independent evaluation.
 
-EXPERIMENT TRACKING:
-trial_id | code_digest | hypothesis | seed | metric | duration_s | status | decision | notes
+STOP / RECOVER
+- Stop when the Trial limit is reached, repeated failures occur, the human asks
+  to stop, budget/resources are exceeded, evaluator or dataset changes, or
+  a Kernel outcome becomes uncertain.
+- Following an API restart, research_get shows existing Trials and Run statuses.
+  Do not replay interrupted Python automatically. Recover artifacts and Notebook
+  versions first; explicitly create a NEW experiment/trial only if approved.
+- Use research_close(experiment_id) when finished. Closing does not kill
+  already-active Jupyter jobs.
+- Final summary must include: protocol_sha256, dataset/environment hashes,
+  Notebook/Cell IDs and candidate source hashes, original baseline, each
+  Trial run_id + evaluator_run_id + recorded metric, best validated Trial,
+  current checkpoint version, artifacts and all unresolved failures.
 
-REAL-TIME VIEW:
-Tell the user to open /notebook/<id>. Current Nebula persists MCP changes to the shared document; browser versions
-are polled (about 2.5s visible, 15s hidden). Outputs appear after successful
-save. True stream events/replay during execution are still planned.
-
-STOP WHEN: iteration budget met, GPU/memory quota exceeded, evaluation changed,
-results cannot be verified, or the user interrupts. Return an experiment summary:
-baseline, best validated metric, best code digest, rejected experiments and
-known limitations. Ask permission before any lengthy or costly new batch.
+UPSTREAM KARPATHY AUTORESEARCH ADAPTATION
+- If running the actual upstream project, first confirm a supported NVIDIA GPU
+  and the exact original train/evaluate environment. Keep prepare.py and
+  evaluate_bpb fixed, edit train.py only, preserve its fixed five-minute
+  training protocol and minimize val_bpb. Nebula's generic Python CPU Runtime
+  is NOT evidence that upstream GPU autoresearch runs successfully.
+- This P1-A MVP is an auditable Agent research ledger with a fixed evaluator
+  CODE HASH; it is NOT a sandboxed adversarial evaluator, automatic optimization
+  loop, isolated GPU scheduler, or a reproduction of upstream reported scores.

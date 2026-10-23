@@ -32,12 +32,16 @@ from .history import snapshot, backfill_current_revisions
 from .migrations import apply_migrations
 from .cell_ops import apply_cell_operation
 from .merge import merge_plan, commit_merge
+from .research import (create_experiment as create_research_experiment, register_trial, finalize_trial,
+                       get_experiment, research_state, public_experiment, _evaluation_locks)
+from .research_artifacts import store_artifact, public_artifact, read_artifact
 from .kernel_gate import claim as claim_kernel, release as release_kernel, uncertain as uncertain_kernel, recover_gates, reset_after_runtime_stop
 from .events import append_event, cursor as event_cursor, delta as document_delta, notebook_stream
 from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtime
 from .execution import (schedule_run, recover_runs, shutdown_runs, submit_run,
                         request_cancel, public_run, ACTIVE)
-from .db import ExecutionRun, NotebookEvent, CellOperation, KernelGate, EventRetention
+from .db import (ExecutionRun, NotebookEvent, CellOperation, KernelGate, EventRetention,
+                 ResearchExperiment, ResearchTrial, ResearchCheckpoint, ResearchArtifact)
 from typing import Literal
 
 
@@ -174,6 +178,29 @@ class SubmitExecutionRun(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
     mode: Literal['cpu', 'gpu'] = 'cpu'
     timeout_seconds: int = Field(default=300, ge=1, le=1800)
+
+
+class NewResearchExperiment(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    evaluator_cell_id: str = Field(min_length=1, max_length=80)
+    metric_name: str = Field(min_length=1, max_length=80)
+    direction: Literal['min', 'max']
+    dataset_sha256: str = Field(min_length=64, max_length=64)
+    environment_sha256: str = Field(min_length=64, max_length=64)
+    mode: Literal['cpu', 'gpu'] = 'cpu'
+    trial_timeout_seconds: int = Field(default=300, ge=1, le=1800)
+    max_trials: int = Field(default=5, ge=1, le=20)
+
+
+class NewResearchTrial(BaseModel):
+    trial_key: str = Field(min_length=8, max_length=128)
+    run_id: str = Field(min_length=1, max_length=36)
+    notebook_version: int = Field(ge=1)
+    hypothesis: str = Field(min_length=1, max_length=500)
+
+
+class FinishResearchTrial(BaseModel):
+    evaluator_run_id: str = Field(min_length=1, max_length=36)
 
 
 class LaunchRuntime(BaseModel):
@@ -393,6 +420,111 @@ async def import_notebook(file: UploadFile = File(...), folder_id: str | None = 
     log_event(db, actor.id, 'notebook.import', nb.id, folder_id or '')
     await db.commit()
     return await document_payload(db, nb, 'owner')
+
+
+# ---------------------------------------------------------------------------
+# P1-A: immutable evaluation protocols and real Run-backed research trials.
+# ---------------------------------------------------------------------------
+
+@app.get('/api/notebooks/{notebook_id}/research')
+async def research_list(notebook_id: str, db: AsyncSession = Depends(get_db),
+                        actor=Depends(current_user)):
+    await require_notebook(db, notebook_id, actor)
+    records = (await db.scalars(select(ResearchExperiment).where(
+        ResearchExperiment.notebook_id == notebook_id)
+        .order_by(ResearchExperiment.created_at.desc()).limit(100))).all()
+    return [public_experiment(e) for e in records]
+
+
+@app.post('/api/notebooks/{notebook_id}/research')
+async def research_create(notebook_id: str, body: NewResearchExperiment,
+                          db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
+    nb, _ = await require_notebook(db, notebook_id, actor, 'editor')
+    return await create_research_experiment(db, nb, actor.id, body)
+
+
+@app.get('/api/notebooks/{notebook_id}/research/{experiment_id}')
+async def research_get(notebook_id: str, experiment_id: str,
+                       db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
+    await require_notebook(db, notebook_id, actor)
+    e = await get_experiment(db, notebook_id, experiment_id)
+    return await research_state(db, e)
+
+
+@app.post('/api/notebooks/{notebook_id}/research/{experiment_id}/trials')
+async def research_record_trial(notebook_id: str, experiment_id: str,
+                                body: NewResearchTrial,
+                                db: AsyncSession = Depends(get_db),
+                                actor=Depends(csrf_user)):
+    await require_notebook(db, notebook_id, actor, 'editor')
+    e = await get_experiment(db, notebook_id, experiment_id)
+    return await register_trial(db, e, actor.id, body)
+
+
+@app.post('/api/notebooks/{notebook_id}/research/{experiment_id}/trials/{trial_id}/finalize')
+async def research_finish_trial(notebook_id: str, experiment_id: str, trial_id: str,
+                                body: FinishResearchTrial,
+                                db: AsyncSession = Depends(get_db),
+                                actor=Depends(csrf_user)):
+    await require_notebook(db, notebook_id, actor, 'editor')
+    e = await get_experiment(db, notebook_id, experiment_id)
+    # Single-worker SQLite admission: serialize metric comparisons so two
+    # finished Trials cannot both claim the same prior-best threshold.
+    lock = _evaluation_locks.setdefault(e.id, asyncio.Lock())
+    async with lock:
+        return await finalize_trial(db, e, actor.id, trial_id, body.evaluator_run_id)
+
+
+@app.post('/api/notebooks/{notebook_id}/research/{experiment_id}/close')
+async def research_close(notebook_id: str, experiment_id: str,
+                         db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
+    nb, role = await require_notebook(db, notebook_id, actor, 'editor')
+    e = await get_experiment(db, notebook_id, experiment_id)
+    if actor.id != e.actor_id and role != 'owner':
+        raise HTTPException(403, 'Only experiment creator or Notebook owner may close')
+    if e.status == 'closed':
+        return public_experiment(e)
+    e.status = 'closed'
+    append_event(db, notebook_id, 'research.closed', actor_id=actor.id,
+                 payload={'experiment_id': e.id})
+    await db.commit()
+    return public_experiment(e)
+
+
+@app.get('/api/notebooks/{notebook_id}/research/{experiment_id}/artifacts')
+async def research_artifacts_list(notebook_id: str, experiment_id: str,
+                                  db: AsyncSession = Depends(get_db),
+                                  actor=Depends(current_user)):
+    await require_notebook(db, notebook_id, actor)
+    await get_experiment(db, notebook_id, experiment_id)
+    rows = (await db.scalars(select(ResearchArtifact).where(
+        ResearchArtifact.experiment_id == experiment_id).limit(1000))).all()
+    return [public_artifact(a) for a in rows]
+
+
+@app.post('/api/notebooks/{notebook_id}/research/{experiment_id}/trials/{trial_id}/artifacts')
+async def research_upload_artifact(notebook_id: str, experiment_id: str, trial_id: str,
+                                   file: UploadFile = File(...),
+                                   db: AsyncSession = Depends(get_db),
+                                   actor=Depends(csrf_user)):
+    await require_notebook(db, notebook_id, actor, 'editor')
+    e = await get_experiment(db, notebook_id, experiment_id)
+    return await store_artifact(db, e, trial_id, actor.id, file)
+
+
+@app.get('/api/notebooks/{notebook_id}/research/{experiment_id}/artifacts/{artifact_id}')
+async def research_download_artifact(notebook_id: str, experiment_id: str, artifact_id: str,
+                                     db: AsyncSession = Depends(get_db),
+                                     actor=Depends(current_user)):
+    await require_notebook(db, notebook_id, actor)
+    await get_experiment(db, notebook_id, experiment_id)
+    a = await db.get(ResearchArtifact, artifact_id)
+    if not a or a.experiment_id != experiment_id:
+        raise HTTPException(404, 'Artifact not found')
+    content = read_artifact(a)
+    return Response(content=content, media_type='application/octet-stream',
+                    headers={'Content-Disposition':f'attachment; filename="{a.name}"',
+                             'X-Content-Type-Options':'nosniff'})
 
 
 @app.get('/api/notebooks/{notebook_id}')
@@ -628,6 +760,16 @@ async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), 
     await db.execute(delete(NotebookRevision).where(NotebookRevision.notebook_id == notebook_id))
     await db.execute(delete(NotebookEvent).where(NotebookEvent.notebook_id == notebook_id))
     await db.execute(delete(EventRetention).where(EventRetention.notebook_id == notebook_id))
+    experiment_ids = select(ResearchExperiment.id).where(
+        ResearchExperiment.notebook_id == notebook_id)
+    await db.execute(delete(ResearchArtifact).where(
+        ResearchArtifact.experiment_id.in_(experiment_ids)))
+    await db.execute(delete(ResearchCheckpoint).where(
+        ResearchCheckpoint.experiment_id.in_(experiment_ids)))
+    await db.execute(delete(ResearchTrial).where(
+        ResearchTrial.experiment_id.in_(experiment_ids)))
+    await db.execute(delete(ResearchExperiment).where(
+        ResearchExperiment.notebook_id == notebook_id))
     await db.execute(delete(CellOperation).where(CellOperation.notebook_id == notebook_id))
     await db.execute(delete(ExecutionRun).where(ExecutionRun.notebook_id == notebook_id))
     await db.delete(nb)

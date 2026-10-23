@@ -8,7 +8,7 @@ PostgreSQL or multi-worker deployments.
 from __future__ import annotations
 from sqlalchemy import text
 
-CURRENT_SCHEMA = 2
+CURRENT_SCHEMA = 3
 
 
 async def apply_migrations(conn):
@@ -47,3 +47,12 @@ async def apply_migrations(conn):
             'pruned_through_id INTEGER NOT NULL DEFAULT 0, '
             'updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)')
         await conn.exec_driver_sql('INSERT INTO schema_migrations(version) VALUES (2)')
+
+    if version < 3:
+        # New research tables only. Existing Notebook/Run history is untouched.
+        from .db import (ResearchExperiment, ResearchTrial,
+                         ResearchCheckpoint, ResearchArtifact)
+        for table in (ResearchExperiment.__table__, ResearchTrial.__table__,
+                      ResearchCheckpoint.__table__, ResearchArtifact.__table__):
+            await conn.run_sync(lambda sync, t=table: t.create(sync, checkfirst=True))
+        await conn.exec_driver_sql('INSERT INTO schema_migrations(version) VALUES (3)')
