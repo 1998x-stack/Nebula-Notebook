@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import re
 import secrets
@@ -35,6 +36,18 @@ from .execution import (schedule_run, recover_runs, shutdown_runs, submit_run,
                         request_cancel, public_run, ACTIVE)
 from .db import ExecutionRun, NotebookEvent, CellOperation, KernelGate
 from typing import Literal
+
+
+def kernel_generation(rt: Runtime | None) -> str | None:
+    """Stable opaque fingerprint of a *specific* container+Jupyter Kernel.
+
+    A restarted Kernel must not be confused with an old in-memory namespace.
+    This is a diagnostic ID, NOT an admission/fencing token.
+    """
+    if not rt or not rt.container_id or not rt.kernel_id:
+        return None
+    return hashlib.sha256(
+        f'{rt.container_id}:{rt.kernel_id}'.encode('utf-8')).hexdigest()[:20]
 
 
 @asynccontextmanager
@@ -706,8 +719,9 @@ async def execution_state(notebook_id: str, db: AsyncSession = Depends(get_db),
         'gate': None if gate is None else {
             'kind': gate.kind, 'state': gate.state,
             'since': gate.created_at.isoformat() if gate.created_at else None},
-        'runtime': {'mode': rt.mode, 'status': rt.status} if rt else
-                   {'mode': None, 'status': 'stopped'},
+        'runtime': {'mode': rt.mode, 'status': rt.status,
+                    'generation': kernel_generation(rt)} if rt else
+                   {'mode': None, 'status': 'stopped', 'generation': None},
         'active_runs': [{'run_id': run.id, 'cell_id': run.cell_id,
                          'status': run.status, 'cancel_requested': bool(run.cancel_requested)}
                         for run in runs],
@@ -723,7 +737,9 @@ async def execution_state(notebook_id: str, db: AsyncSession = Depends(get_db),
 async def runtime_status(notebook_id: str, db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
     await require_notebook(db, notebook_id, actor)
     rt = await db.get(Runtime, notebook_id)
-    return {'mode': rt.mode, 'status': rt.status} if rt else {'mode': None, 'status': 'stopped'}
+    return {'mode': rt.mode, 'status': rt.status,
+            'generation': kernel_generation(rt)} if rt else {
+                'mode': None, 'status': 'stopped', 'generation': None}
 
 
 @app.post('/api/notebooks/{notebook_id}/runtime')
