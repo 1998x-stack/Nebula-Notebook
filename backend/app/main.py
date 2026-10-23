@@ -264,7 +264,8 @@ async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), 
 async def export_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
     nb, _ = await require_notebook(db, notebook_id, actor)
     raw = json.dumps(nb.document, ensure_ascii=False, indent=2).encode()
-    safe = ''.join(c if c.isalnum() or c in '-_' else '_' for c in nb.title)[:80] or 'notebook'
+    # HTTP headers are latin-1; keep the download filename ASCII-only.
+    safe = ''.join(c if c.isascii() and (c.isalnum() or c in '-_') else '_' for c in nb.title)[:80].strip('_') or 'notebook'
     return Response(raw, media_type='application/x-ipynb+json',
                     headers={'Content-Disposition': f'attachment; filename="{safe}.ipynb"'})
 

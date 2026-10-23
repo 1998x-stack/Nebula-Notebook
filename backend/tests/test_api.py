@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from .conftest import login
 
@@ -37,6 +39,18 @@ async def test_viewer_cannot_modify_or_start_runtime(clients):
     assert (await clients.put(f'/api/notebooks/{nb_id}',headers=viewer_headers,json={'title':'X','version':1,'document':created['document']})).status_code == 403
     assert (await clients.post(f'/api/notebooks/{nb_id}/runtime',headers=viewer_headers,json={'mode':'cpu'})).status_code == 403
     assert (await clients.put(f'/api/notebooks/{nb_id}/shares',headers=viewer_headers,json={'email':'viewer@test.local','role':'editor'})).status_code == 403
+
+
+async def test_export_non_ascii_title_has_latin1_safe_header(clients):
+    headers = await login(clients)
+    created = await clients.post('/api/notebooks', headers=headers, json={'title': '示例 · 中文标题'})
+    notebook_id = created.json()['id']
+    exported = await clients.get(f'/api/notebooks/{notebook_id}/export')
+    assert exported.status_code == 200, exported.text
+    disposition = exported.headers['content-disposition']
+    disposition.encode('latin-1')  # raises if a non-ASCII filename leaks into the header
+    assert 'filename=' in disposition
+    assert json.loads(exported.content)['nbformat'] == 4
 
 
 async def test_notebook_format_validation(clients):

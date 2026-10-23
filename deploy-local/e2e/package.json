@@ -9,6 +9,7 @@
     "xss": "node xss.cjs",
     "plot": "node plot.cjs",
     "transient": "node transient-test.cjs",
+    "export": "node export-test.cjs",
     "demo-lan": "node demo-lan.cjs"
   },
   "dependencies": {
