@@ -32,8 +32,19 @@ async def run(args):
             revisions = int(await db.scalar(select(func.count(NotebookRevision.id)).where(
                 NotebookRevision.notebook_id == nb.id)) or 0)
             floor = await retention_floor(db, nb.id)
+            # Approximate JSON character lengths are useful for spotting
+            # outlier notebooks without loading large documents into Python.
+            revision_chars = int(await db.scalar(select(
+                func.sum(func.length(NotebookRevision.document))).where(
+                NotebookRevision.notebook_id == nb.id)) or 0)
+            event_chars = int(await db.scalar(select(
+                func.sum(func.length(NotebookEvent.payload))).where(
+                NotebookEvent.notebook_id == nb.id)) or 0)
             entry = {'id': nb.id, 'title': nb.title, 'version': nb.version,
-                     'events': events, 'revisions': revisions, 'event_floor': floor}
+                     'events': events, 'revisions': revisions, 'event_floor': floor,
+                     'current_document_bytes': int(nb.document_bytes or 0),
+                     'revision_json_chars_estimate': revision_chars,
+                     'retained_event_json_chars_estimate': event_chars}
             if args.command == 'prune-events':
                 entry['retention'] = await compact_events(
                     db, nb.id, keep=args.keep, apply=args.apply)
