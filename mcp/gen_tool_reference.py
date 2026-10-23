@@ -25,6 +25,7 @@ END = '<!-- END GENERATED TOOL REFERENCE -->'
 GROUPS: list[tuple[str, tuple[str, ...]]] = [
     ('健康检查与能力', ('nebula_health', 'nebula_capabilities')),
     ('Notebook 与文件夹', ('notebook_', 'folder_')),
+    ('研究实验', ('research_',)),
     ('Cell 与执行', ('cell_', 'code_execute', 'run_')),
     ('Runtime / kernel', ('runtime_', 'kernel_')),
     ('Workspace 文件', ('workspace_',)),
