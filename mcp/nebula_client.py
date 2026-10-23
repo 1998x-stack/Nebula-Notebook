@@ -151,6 +151,10 @@ def summarize_cell(cell: dict, index: int, include_outputs: bool = False,
                    include_data: bool = False) -> dict:
     item = {
         "index": index,
+        # `cell_id`/`cell_type` are the names every other cell tool accepts and
+        # returns; `id`/`type` are kept as aliases for earlier clients.
+        "cell_id": cell.get("id"),
+        "cell_type": cell.get("cell_type"),
         "id": cell.get("id"),
         "type": cell.get("cell_type"),
         "source": text(cell.get("source")),

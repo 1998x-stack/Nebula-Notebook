@@ -637,9 +637,15 @@ async def user_create(email: str, password: str, is_admin: bool = False) -> dict
 
 @mcp.tool(annotations=DESTRUCTIVE)
 async def user_set_active(user_id: str, is_active: bool) -> dict:
-    """Activate/deactivate a user and invalidate their sessions when disabling (admin only)."""
+    """Activate/deactivate a user and invalidate their sessions when disabling (admin only).
+
+    Returns the updated user record, so callers can confirm the new state instead of
+    trusting an opaque {"ok": true}.
+    """
     _require_write("user_set_active")
-    return await client.set_user_active(user_id, is_active)
+    await client.set_user_active(user_id, is_active)
+    users = await client.list_users()
+    return next((u for u in users if u.get("id") == user_id), {"id": user_id, "is_active": is_active})
 
 
 @mcp.tool(annotations=READ)

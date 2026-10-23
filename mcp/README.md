@@ -148,7 +148,7 @@ env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/you
 
 | Tool | 作用 |
 |---|---|
-| `cell_list` | 列出 cell（index/id/type/source） |
+| `cell_list` | 列出 cell（`index`/`cell_id`/`cell_type`/`source`；保留 `id`/`type` 别名） |
 | `cell_get` | 读取单个 cell，可带输出 |
 | `cell_add` | 新增 cell；`index` / `after_cell_id` 控制插入位置 |
 | `cell_insert` | `cell_add` 的别名，语义更直观 |
@@ -173,7 +173,7 @@ env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/you
 | `workspace_read` | 读任意深度文件（文本或 base64），走内核 |
 | `workspace_upload` / `workspace_download` / `workspace_delete` | 走 REST 的**扁平**文件操作（仅根目录简单文件名） |
 | `share_list` / `share_add` / `share_remove` | owner 分享 viewer/editor |
-| `user_list` / `user_create` / `user_set_active` / `audit_list` | 管理员工具 |
+| `user_list` / `user_create` / `user_set_active` / `audit_list` | 管理员工具；`user_create`/`user_set_active` 都返回用户对象（后者停用时同时失效该用户会话） |
 
 ### 文件夹（dashboard 的分组层）
 
@@ -351,7 +351,12 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `user_list` | — |  |
 | `user_set_active` | `user_id:str`, `is_active:bool` |  |
 
-每个工具的返回值都是 JSON 对象；执行类工具返回 `outputs`（stream / error / `data_keys`），
-大图默认只给摘要，需要原始 MIME 时传 `include_data=true`。参数含义见各工具 docstring（`mcp/server.py`）。
+返回值约定：
+
+- 返回对象的工具：`structuredContent` 就是该对象。
+- 返回列表的工具（如 `notebook_list`、`cell_list`、`user_list`）：`structuredContent` 形如 `{"result": [...]}`，只有文本通道的客户端会按元素拆成多个 content block —— 客户端应优先读 `structuredContent`。
+- 执行类工具返回 `outputs`（stream / error / `data_keys`）；大图默认只给摘要，需要原始 MIME 时传 `include_data=true`。
+
+参数含义见各工具 docstring（`mcp/server.py`）。
 
 <!-- END GENERATED TOOL REFERENCE -->
