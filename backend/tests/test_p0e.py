@@ -190,3 +190,22 @@ async def test_independent_title_and_metadata_changes_merge_without_drop(clients
     assert p['can_merge'] is True
     assert p['merged_title']=='Local renamed'
     assert p['merged_document']['metadata']['remote_note']=='other'
+
+async def test_draft_fork_preserves_local_work_without_overwriting_shared_notebook(clients):
+    h, nb = await create(clients)
+    mine=copy.deepcopy(nb['document'])
+    mine['cells'][1]['source']='print("my unpublished experiment")'
+    remote=copy.deepcopy(nb['document'])
+    remote['cells'][1]['source']='print("other collaborator")'
+    assert (await save(clients,h,nb['id'],1,remote)).status_code==200
+    fork=await clients.post(f"/api/notebooks/{nb['id']}/merge/fork-draft",
+                            headers=h,json={'base_version':1,'mine_document':mine,
+                                            'mine_title':'My research'})
+    assert fork.status_code==200, fork.text
+    child=fork.json()
+    assert child['id']!=nb['id'] and child['version']==1 and child['role']=='owner'
+    assert child['forked_from_notebook_id']==nb['id']
+    assert child['forked_from_version']==1
+    assert ''.join(child['document']['cells'][1]['source'])=='print("my unpublished experiment")'
+    parent=(await clients.get(f"/api/notebooks/{nb['id']}")).json()
+    assert parent['version']==2 and ''.join(parent['document']['cells'][1]['source'])=='print("other collaborator")'
