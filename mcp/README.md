@@ -347,7 +347,6 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `cell_run_all` | `notebook_id:str`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
 | `cell_update` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `source:str | null`, `cell_type:Literal['code', 'markdown', 'raw'] | None` | `cell_id` = `null`<br>`index` = `null`<br>`source` = `null`<br>`cell_type` = `null` |
 | `code_execute` | `notebook_id:str`, `code:str`, `timeout:float`, `persist:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `False`<br>`include_data` = `False` |
-
 | `run_cancel` | `notebook_id:str`, `run_id:str` |  |
 | `run_status` | `notebook_id:str`, `run_id:str` |  |
 | `run_submit` | `notebook_id:str`, `cell_id:str`, `idempotency_key:str`, `mode:Literal['cpu', 'gpu']`, `timeout_seconds:int` | `mode` = `'cpu'`<br>`timeout_seconds` = `300` |
