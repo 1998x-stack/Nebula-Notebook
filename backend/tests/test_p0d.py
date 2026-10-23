@@ -190,3 +190,25 @@ async def test_viewer_cannot_learn_execution_metadata(clients, monkeypatch):
     await login(clients, **account)
     res = await clients.get(f'/api/notebooks/{nbid}/execution-state')
     assert res.status_code == 403
+
+async def test_runtime_generation_changes_when_kernel_changes(clients, monkeypatch):
+    from app.db import Notebook, Runtime
+    h, nbid, _ = await sample_run(clients, monkeypatch)
+    async with SessionLocal() as db:
+        nb = await db.get(Notebook, nbid)
+        db.add(Runtime(notebook_id=nbid, owner_id=nb.owner_id, mode='cpu',
+                       status='ready', token='fake-token',
+                       container_id='test-container-a', kernel_id='kernel-1',
+                       port=8888))
+        await db.commit()
+    route = f'/api/notebooks/{nbid}/execution-state'
+    first = (await clients.get(route)).json()['runtime']['generation']
+    assert isinstance(first, str) and len(first) == 20
+    status = (await clients.get(f'/api/notebooks/{nbid}/runtime')).json()
+    assert status['generation'] == first
+    async with SessionLocal() as db:
+        runtime = await db.get(Runtime, nbid)
+        runtime.kernel_id = 'kernel-2'
+        await db.commit()
+    second = (await clients.get(route)).json()['runtime']['generation']
+    assert second != first
