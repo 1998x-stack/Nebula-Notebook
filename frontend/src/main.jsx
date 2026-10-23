@@ -9,7 +9,7 @@ import { BookOpen, Plus, Play, Square, RefreshCcw, Save, Download, Upload, Trash
 import './style.css';
 
 const pyExtensions = [python()];
-const randomId = () => crypto.randomUUID().replaceAll('-', '').slice(0, 20);
+const randomId = () => { if (globalThis.crypto?.randomUUID) return crypto.randomUUID().replaceAll('-', '').slice(0, 20); const bytes = new Uint8Array(10); crypto.getRandomValues(bytes); return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); };
 let csrfToken = '';
 async function api(path, options={}) {
   const headers = {...options.headers};
@@ -25,7 +25,7 @@ async function api(path, options={}) {
   return res;
 }
 function sourceText(src) { return Array.isArray(src) ? src.join('') : (src || ''); }
-function normalize(doc) { return {...doc, cells: (doc.cells || []).map(c=>({...c, source: sourceText(c.source), outputs:c.outputs || [], execution_count:c.execution_count ?? null}))}; }
+function normalize(doc) { return {...doc, cells: (doc.cells || []).map(c=>{const {outputs, execution_count, ...rest}=c; return c.cell_type==='code' ? {...rest, source: sourceText(c.source), outputs: outputs || [], execution_count: execution_count ?? null} : {...rest, source: sourceText(c.source)};})}; }
 function HeaderButton({children, onClick, className='', disabled=false, title='', ...props}) {return <button {...props} title={title} onClick={onClick} disabled={disabled} className={'btn '+className}>{children}</button>}
 function newCell(type='code') { return {cell_type:type, id:randomId(), metadata:{}, source:'', ...(type==='code'?{outputs:[],execution_count:null}:{})}; }
 
