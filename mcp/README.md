@@ -229,6 +229,10 @@ run_cancel(notebook_id, run_id)                   # request interrupt
 这是单进程 beta 的持久化任务记录，不是分布式队列，也不承诺 exactly-once
 Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_RUNS.md)。
 
+共享编辑同一个 Cell 时，Agent 可向 `cell_update` 提交 `expected_version`。
+若共享原件已更新就返回冲突；不传参则保持旧客户端自动重试行为。
+新增、删除、移动的 CAS 前置条件将在下一阶段扩展。
+
 ### 多用户共享 Notebook 与自由 Fork
 
 每个 Pi/Claude/Codex/OpenCode Agent 使用不同注册用户的

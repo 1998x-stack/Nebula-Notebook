@@ -734,12 +734,14 @@ class NebulaClient:
 
     async def update_cell(self, notebook_id: str, *, cell_id: str | None = None,
                           index: int | None = None, source: str | None = None,
-                          cell_type: str | None = None) -> dict:
+                          cell_type: str | None = None, expected_version: int | None = None) -> dict:
         if source is None and cell_type is None:
             raise NebulaError("Provide source and/or cell_type")
         box: dict[str, Any] = {}
 
         def apply(doc: dict, _nb: dict) -> None:
+            if expected_version is not None and _nb['version'] != expected_version:
+                raise Conflict(f'Notebook changed since v{expected_version}; current v{_nb["version"]}')
             at = self._cell_index(doc, cell_id, index)
             cell = doc["cells"][at]
             if source is not None:

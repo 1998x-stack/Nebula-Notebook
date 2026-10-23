@@ -395,12 +395,14 @@ async def cell_insert(notebook_id: str, source: str = "",
 @mcp.tool(annotations=WRITE)
 async def cell_update(notebook_id: str, cell_id: str | None = None,
                       index: int | None = None, source: str | None = None,
-                      cell_type: Literal["code", "markdown", "raw"] | None = None) -> dict:
+                      cell_type: Literal["code", "markdown", "raw"] | None = None,
+                      expected_version: int | None = None) -> dict:
     """Update a cell's source and/or type (changing type keeps the document valid)."""
     _require_write("cell_update")
     return await client.update_cell(
         notebook_id, cell_id=cell_id, index=index,
-        source=source, cell_type=cell_type)
+        source=source, cell_type=cell_type,
+        expected_version=expected_version)
 
 
 @mcp.tool(annotations=DESTRUCTIVE)
