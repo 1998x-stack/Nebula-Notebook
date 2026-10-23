@@ -359,7 +359,7 @@ function NotebookEditor({id,user,back,logout}) {
  },[id,entry?.id]);
 
  useEffect(()=>{if(!dirty||!canEdit)return;const handler=e=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[dirty,canEdit]);
- function changeTitle(t){setTitle(t);latestTitle.current=t;revisions.current++;setRevision(revisions.current);setDirty(true)}
+ function changeTitle(t){setTitle(t);latestTitle.current=t;revisions.current++;dirtyRef.current=true;setRevision(revisions.current);setDirty(true)}
  function move(i,delta){editDoc(d=>{const arr=[...d.cells];const j=i+delta;if(j<0||j>=arr.length)return d;[arr[i],arr[j]]=[arr[j],arr[i]];return {...d,cells:arr}})}
  function add(index,type){editDoc(d=>({...d,cells:[...d.cells.slice(0,index),newCell(type),...d.cells.slice(index)]}))}
  function remove(index){editDoc(d=>({...d,cells:d.cells.filter((_,i)=>i!==index)}))}
