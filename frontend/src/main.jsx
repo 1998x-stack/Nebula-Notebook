@@ -315,7 +315,7 @@ function NotebookEditor({id,user,back,logout}) {
  const socket=useRef(null),versions=useRef(1),revisions=useRef(0),savingRef=useRef(false),pending=useRef(new Map()),latestDoc=useRef(null),latestTitle=useRef('');
  const dirtyRef=useRef(false),lastExternalVersion=useRef(0);
  const baselineRef=useRef(null),baselineTitleRef=useRef('');
- const mergeBlockedRef=useRef(false),mergeOperationRef=useRef(null);
+ const mergeBlockedRef=useRef(false),mergeOperationRef=useRef(null),mergePreviewRevisionRef=useRef(null);
  const [mergeOpen,setMergeOpen]=useState(false),[mergeBusy,setMergeBusy]=useState(false),
        [mergePreview,setMergePreview]=useState(null),[mergeTheirs,setMergeTheirs]=useState(null),
        [mergeChoices,setMergeChoices]=useState({}),[mergeError,setMergeError]=useState('');
@@ -499,14 +499,17 @@ function NotebookEditor({id,user,back,logout}) {
  async function inspectMerge(choices=mergeChoices){
    const baseline=baselineRef.current;
    if(!baseline||!latestDoc.current)return;
+   const snapshot=latestDoc.current,at=revisions.current;
    setMergeBusy(true);setMergeError('');
    try{
      const [plan,current]=await Promise.all([
        api(`/notebooks/${id}/merge/preview`,{method:'POST',
-         body:JSON.stringify({base_version:baseline.version,mine_document:latestDoc.current,
+         body:JSON.stringify({base_version:baseline.version,mine_document:snapshot,
                                mine_title:latestTitle.current,resolutions:choices})}),
        api(`/notebooks/${id}`)
      ]);
+     if(revisions.current!==at){setMergePreview(null);setMergeError('Draft changed during preview. Preview again before committing.');return;}
+     mergePreviewRevisionRef.current=at;
      setMergePreview(plan);setMergeTheirs(current);
      if(mergeOperationRef.current?.latest_version!==plan.latest_version)
        mergeOperationRef.current=null;
@@ -515,6 +518,9 @@ function NotebookEditor({id,user,back,logout}) {
  }
  async function commitResolvedMerge(){
    if(!mergePreview?.can_merge||!baselineRef.current||!latestDoc.current)return;
+   if(mergePreviewRevisionRef.current!==revisions.current){
+     setMergePreview(null);setMergeError('Draft changed since preview; preview again.');return;
+   }
    setMergeBusy(true);setMergeError('');
    const baseline=baselineRef.current;
    const original=mergeOperationRef.current;
@@ -546,6 +552,17 @@ function NotebookEditor({id,user,back,logout}) {
        setMergeError('Another edit arrived or a conflict remains. Refresh the preview; your draft is preserved.');
      }else{setMergeError(e.message)}
    }finally{setMergeBusy(false)}
+ }
+ async function forkMyUnsavedDraft(){
+   const baseline=baselineRef.current;
+   if(!baseline||!latestDoc.current)return;
+   setMergeBusy(true);setMergeError('');
+   try{
+     const created=await api(`/notebooks/${id}/merge/fork-draft`,{method:'POST',
+       body:JSON.stringify({base_version:baseline.version,mine_title:latestTitle.current,
+                             mine_document:latestDoc.current})});
+     location.href='/notebook/'+encodeURIComponent(created.id);
+   }catch(e){setMergeError(e.message)}finally{setMergeBusy(false)}
  }
  function conflictCellSummary(doc, key){
    if(!key?.startsWith('cell:'))return '';
@@ -588,7 +605,7 @@ function NotebookEditor({id,user,back,logout}) {
          <label>Resolve this conflict
            <select value={mergeChoices[conflict.key]||''} onChange={e=>{
              setMergeChoices(prev=>({...prev,[conflict.key]:e.target.value}));
-             setMergePreview(null);mergeOperationRef.current=null;
+             setMergePreview(previous=>previous?{...previous,can_merge:false}:previous);mergeOperationRef.current=null;
            }}>
              <option value="">Choose explicitly</option><option value="mine">Keep my change</option><option value="theirs">Keep latest shared change</option>
            </select>
@@ -598,6 +615,7 @@ function NotebookEditor({id,user,back,logout}) {
      </>}
      {mergeError&&<div className="alert"><AlertCircle size={15}/>{mergeError}</div>}
      <div className="modal-actions">
+       <HeaderButton onClick={forkMyUnsavedDraft} disabled={mergeBusy}>Save draft as private fork</HeaderButton>
        <HeaderButton onClick={()=>setMergeOpen(false)}>Keep editing draft</HeaderButton>
        <HeaderButton className="primary" disabled={mergeBusy||!mergePreview?.can_merge}
          onClick={commitResolvedMerge}>Commit merged version</HeaderButton>
