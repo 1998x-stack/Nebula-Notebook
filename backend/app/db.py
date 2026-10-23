@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from .config import settings
@@ -121,6 +121,78 @@ class ExecutionRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (UniqueConstraint('notebook_id', 'actor_id', 'idempotency_key',
                                       name='uq_execution_run_idempotency'),)
+
+
+class ResearchExperiment(Base):
+    """Immutable evaluator protocol. Owner may close, never rewrite protocol."""
+    __tablename__ = 'research_experiments'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    notebook_id: Mapped[str] = mapped_column(ForeignKey('notebooks.id'), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    title: Mapped[str] = mapped_column(String(200))
+    evaluator_cell_id: Mapped[str] = mapped_column(String(80))
+    evaluator_sha256: Mapped[str] = mapped_column(String(64))
+    metric_name: Mapped[str] = mapped_column(String(80))
+    direction: Mapped[str] = mapped_column(String(3))
+    dataset_sha256: Mapped[str] = mapped_column(String(64))
+    environment_sha256: Mapped[str] = mapped_column(String(64))
+    protocol_sha256: Mapped[str] = mapped_column(String(64))
+    baseline_version: Mapped[int] = mapped_column(Integer)
+    mode: Mapped[str] = mapped_column(String(8))
+    max_trials: Mapped[int] = mapped_column(Integer)
+    trial_timeout_seconds: Mapped[int] = mapped_column(Integer)
+    trials_started: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(12), default='active')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchTrial(Base):
+    """A signed-off run receipt for an immutable candidate source snapshot."""
+    __tablename__ = 'research_trials'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    experiment_id: Mapped[str] = mapped_column(ForeignKey('research_experiments.id'), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    trial_key: Mapped[str] = mapped_column(String(128))
+    run_id: Mapped[str] = mapped_column(ForeignKey('execution_runs.id'), unique=True)
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    notebook_version: Mapped[int] = mapped_column(Integer)
+    cell_id: Mapped[str] = mapped_column(String(80))
+    hypothesis: Mapped[str] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(16), default='recorded')
+    evaluator_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey('execution_runs.id'), unique=True, nullable=True)
+    metric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decision: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint('experiment_id', 'trial_key', name='uq_research_trial_key'),)
+
+
+class ResearchCheckpoint(Base):
+    """Reproducibility pointer to an immutable candidate Notebook version."""
+    __tablename__ = 'research_checkpoints'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    experiment_id: Mapped[str] = mapped_column(ForeignKey('research_experiments.id'), index=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey('research_trials.id'), unique=True)
+    notebook_version: Mapped[int] = mapped_column(Integer)
+    source_sha256: Mapped[str] = mapped_column(String(64))
+    metric_value: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchArtifact(Base):
+    """Access-controlled SHA-256 object; payload lives in data/artifacts."""
+    __tablename__ = 'research_artifacts'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    experiment_id: Mapped[str] = mapped_column(ForeignKey('research_experiments.id'), index=True)
+    trial_id: Mapped[str] = mapped_column(ForeignKey('research_trials.id'), index=True)
+    actor_id: Mapped[str] = mapped_column(ForeignKey('users.id'))
+    name: Mapped[str] = mapped_column(String(120))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    media_type: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint('trial_id', 'name', 'sha256', name='uq_research_artifact'),)
 
 
 class KernelGate(Base):
