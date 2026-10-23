@@ -183,8 +183,27 @@ class SubmitExecutionRun(BaseModel):
 class NewResearchExperiment(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     evaluator_cell_id: str = Field(min_length=1, max_length=80)
-    metric_name: str = Field(min_length=1, max_length=80,
-                             pattern=r'^[A-Za-z][A-Za-z0-9_.-]*
+    metric_name: str = Field(min_length=1, max_length=80)
+    direction: Literal['min', 'max']
+    dataset_sha256: str = Field(min_length=64, max_length=64)
+    environment_sha256: str = Field(min_length=64, max_length=64)
+    mode: Literal['cpu', 'gpu'] = 'cpu'
+    trial_timeout_seconds: int = Field(default=300, ge=1, le=1800)
+    max_trials: int = Field(default=5, ge=1, le=20)
+
+
+class NewResearchTrial(BaseModel):
+    trial_key: str = Field(min_length=8, max_length=128)
+    run_id: str = Field(min_length=1, max_length=36)
+    notebook_version: int = Field(ge=1)
+    hypothesis: str = Field(min_length=1, max_length=500)
+
+
+class FinishResearchTrial(BaseModel):
+    evaluator_run_id: str = Field(min_length=1, max_length=36)
+
+
+class LaunchRuntime(BaseModel):
     mode: str
 
 
