@@ -10,6 +10,7 @@ import 'katex/dist/katex.min.css';
 import DOMPurify from 'dompurify';
 import { ArrowDownUp, BookOpen, Folder, FolderInput, FolderPlus, LayoutGrid, List as ListIcon, PanelLeftClose, PanelLeftOpen, Plus, Play, Square, RefreshCcw, Save, Download, Upload, Trash2, ChevronUp, ChevronDown, Code2, FileText, Cpu, LogOut, Users, Shield, X, Settings2, RotateCcw, CircleHelp, Activity, Check, AlertCircle, NotebookPen, Eye, Pencil, CircleStop, Zap, Search, Copy } from 'lucide-react';
 import './style.css';
+import {applyNotebookDelta,mergeRemoteOutput} from './liveEvents.mjs';
 
 // Markdown rendering: GFM tables/lists + KaTeX math ($...$ inline, $$...$$ display).
 // strict:'ignore' keeps KaTeX from throwing on unicode inside math (e.g. \text{中文}),
@@ -391,18 +392,8 @@ function NotebookEditor({id,user,back,logout}) {
        }
        return Promise.resolve();
      }
-     if(payload.full_sync||version!==versions.current+1||!Array.isArray(payload.order)||
-        !Array.isArray(payload.changed)||!Array.isArray(payload.removed)){
-       return reloadLatest();
-     }
-     const old=latestDoc.current;
-     if(!old)return reloadLatest();
-     const cells=new Map(old.cells.map(c=>[c.id,c]));
-     for(const cellId of payload.removed)cells.delete(cellId);
-     for(const cell of normalize({cells:payload.changed}).cells)cells.set(cell.id,cell);
-     if(payload.order.length!==cells.size||new Set(payload.order).size!==cells.size||
-        payload.order.some(cellId=>!cells.has(cellId)))return reloadLatest();
-     const updated={...old,cells:payload.order.map(cellId=>cells.get(cellId))};
+     const updated=applyNotebookDelta(latestDoc.current,payload,versions.current,version);
+     if(!updated)return reloadLatest();
      latestDoc.current=updated;setDoc(updated);versions.current=version;
      if(typeof payload.title==='string'){latestTitle.current=payload.title;setTitle(payload.title);}
      setEntry(previous=>previous?{...previous,version,title:payload.title||previous.title}:previous);
@@ -421,11 +412,8 @@ function NotebookEditor({id,user,back,logout}) {
      }else if(event.kind==='run.output'&&!dirtyRef.current&&!savingRef.current){
        const outputs=event.payload?.outputs;
        if(!Array.isArray(outputs)||outputs.length>100)return;
-       const previous=latestDoc.current;
-       if(!previous||!previous.cells.some(c=>c.id===cellId))return;
-       const updated={...previous,cells:previous.cells.map(c=>c.id===cellId?
-          {...c,outputs:[...(c.outputs||[]),...outputs].slice(-200)}:c)};
-       latestDoc.current=updated;setDoc(updated);
+       const updated=mergeRemoteOutput(latestDoc.current,cellId,outputs);
+       if(updated){latestDoc.current=updated;setDoc(updated);}
      }
    }
    function disconnect(){
