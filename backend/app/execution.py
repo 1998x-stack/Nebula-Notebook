@@ -26,6 +26,7 @@ from .runtime import start_runtime, interrupt_runtime
 from .security import require_notebook
 from .validation import checked_document
 from .history import snapshot
+from .events import append_event, emit_run, delta as document_delta
 
 log = logging.getLogger(__name__)
 FINAL = frozenset({'succeeded', 'failed', 'timed_out', 'cancelled', 'interrupted', 'stale'})
@@ -175,6 +176,8 @@ async def _finish(run_id: str, status: str, *, outputs=None, count=None, error=N
         run.execution_count = count
         run.error = str(error)[:1000] if error else None
         await db.commit()
+    await emit_run(run_id, 'run.finished', {'status': status,
+                    'error': str(error)[:500] if error else None})
 
 
 async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool:
@@ -197,6 +200,7 @@ async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool
             target['outputs'] = outputs
             target['execution_count'] = count
             checked = checked_document(doc)
+            patch = document_delta(nb.document, checked, nb.title)
             expected_version = nb.version
             result = await db.execute(update(Notebook).where(
                 Notebook.id == nb.id, Notebook.version == expected_version).values(
@@ -205,6 +209,9 @@ async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool
             if result.rowcount:
                 snapshot(db, nb, version=expected_version + 1, title=nb.title,
                          document=checked, author_id=run.actor_id, reason='execute')
+                append_event(db, nb.id, 'document.committed', actor_id=run.actor_id,
+                             version=expected_version + 1, run_id=run.id,
+                             cell_id=run.cell_id, payload=patch)
                 await db.commit()
                 return True
             await db.rollback()
@@ -230,6 +237,9 @@ async def worker(run_id: str):
                     await _finish(run_id, 'cancelled')
                     return
                 run.status, run.started_at = 'running', utcnow()
+                append_event(db, notebook_id, 'run.started', actor_id=run.actor_id,
+                             run_id=run.id, cell_id=run.cell_id,
+                             payload={'status': 'running'})
                 await db.commit()
                 nb = await db.get(Notebook, notebook_id)
                 actor = await db.get(User, run.actor_id)
@@ -319,6 +329,9 @@ async def submit_run(db, nb: Notebook, actor_id: str, *, cell_id: str,
                        source_code=source, source_sha256=signature, mode=mode,
                        timeout_seconds=timeout_seconds, status='queued', outputs=[])
     db.add(run)
+    append_event(db, nb.id, 'run.queued', actor_id=actor_id,
+                 run_id=run.id, cell_id=cell_id,
+                 payload={'status': 'queued'})
     try:
         await db.commit()
     except IntegrityError:
@@ -340,9 +353,13 @@ async def request_cancel(db, run: ExecutionRun):
         return run
     if run.status == 'queued':
         run.status, run.cancel_requested, run.finished_at = 'cancelled', True, utcnow()
+        append_event(db, run.notebook_id, 'run.finished', actor_id=run.actor_id,
+                     run_id=run.id, cell_id=run.cell_id, payload={'status': 'cancelled'})
         await db.commit()
         return run
     run.cancel_requested, run.status = True, 'cancelling'
+    append_event(db, run.notebook_id, 'run.cancelling', actor_id=run.actor_id,
+                 run_id=run.id, cell_id=run.cell_id, payload={'status': 'cancelling'})
     await db.commit()
     rt = await db.get(Runtime, run.notebook_id)
     if rt and rt.status == 'ready':

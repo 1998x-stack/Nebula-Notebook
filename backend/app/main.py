@@ -27,10 +27,11 @@ from .security import (hash_password, verify_password, rate_check, new_session, 
                        admin_only, admin_write, require_notebook, websocket_identity)
 from .validation import default_document, checked_document
 from .history import snapshot, backfill_current_revisions
+from .events import append_event, cursor as event_cursor, delta as document_delta, notebook_stream
 from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtime
 from .execution import (schedule_run, recover_runs, shutdown_runs, submit_run,
                         request_cancel, public_run, ACTIVE)
-from .db import ExecutionRun
+from .db import ExecutionRun, NotebookEvent
 from typing import Literal
 
 
@@ -194,7 +195,8 @@ async def document_payload(db, nb, role):
               'forked_from_version': nb.forked_from_version,
               'size_bytes': int(nb.document_bytes or 0),
               'version': nb.version, 'updated_at': nb.updated_at.isoformat() if nb.updated_at else None,
-              'role': role, 'document': nb.document}
+              'role': role, 'document': nb.document,
+              'event_cursor': await event_cursor(db, nb.id)}
     rt = await db.get(Runtime, nb.id)
     result['runtime'] = {'mode': rt.mode, 'status': rt.status} if rt else None
     return result
@@ -321,6 +323,8 @@ async def create_notebook(body: NewNotebook, db: AsyncSession = Depends(get_db),
                   document=doc, document_bytes=document_size(doc), version=1)
     db.add(nb)
     snapshot(db, nb, version=1, title=nb.title, document=doc, author_id=actor.id, reason='create')
+    append_event(db, nb.id, 'document.committed', actor_id=actor.id,
+                 version=1, payload={'full_sync': True})
     log_event(db, actor.id, 'notebook.create', nb.id, body.folder_id or '')
     await db.commit()
     return await document_payload(db, nb, 'owner')
@@ -343,6 +347,8 @@ async def import_notebook(file: UploadFile = File(...), folder_id: str | None = 
                   document=document, document_bytes=document_size(document), version=1)
     db.add(nb)
     snapshot(db, nb, version=1, title=nb.title, document=document, author_id=actor.id, reason='import')
+    append_event(db, nb.id, 'document.committed', actor_id=actor.id,
+                 version=1, payload={'full_sync': True})
     log_event(db, actor.id, 'notebook.import', nb.id, folder_id or '')
     await db.commit()
     return await document_payload(db, nb, 'owner')
@@ -352,6 +358,32 @@ async def import_notebook(file: UploadFile = File(...), folder_id: str | None = 
 async def get_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
     nb, role = await require_notebook(db, notebook_id, actor)
     return await document_payload(db, nb, role)
+
+
+
+@app.get('/api/notebooks/{notebook_id}/events')
+async def notebook_events(notebook_id: str, request: Request, after: int = 0,
+                          db: AsyncSession = Depends(get_db),
+                          actor=Depends(current_user)):
+    """Authenticated SSE with globally monotonic event IDs and Last-Event-ID resume.
+
+    One stream per visible editor; no kernel tokens or other notebooks' data.
+    New readers should pass the event_cursor from GET /notebooks/{id}.
+    """
+    await require_notebook(db, notebook_id, actor)
+    raw_last = request.headers.get('last-event-id', '')
+    if raw_last:
+        try:
+            after = int(raw_last)
+        except ValueError:
+            raise HTTPException(422, 'Invalid Last-Event-ID')
+    if after < 0:
+        raise HTTPException(422, 'Cursor cannot be negative')
+    return StreamingResponse(notebook_stream(request, notebook_id, after),
+                             media_type='text/event-stream',
+                             headers={'Cache-Control': 'no-cache, no-transform',
+                                      'X-Accel-Buffering': 'no',
+                                      'Content-Security-Policy': "default-src 'none'"})
 
 
 @app.get('/api/notebooks/{notebook_id}/revision')
@@ -419,6 +451,8 @@ async def fork_notebook(notebook_id: str, body: ForkNotebook, db: AsyncSession =
     db.add(fork)
     snapshot(db, fork, version=1, title=name, document=document,
              author_id=actor.id, reason='fork')
+    append_event(db, fork.id, 'document.committed', actor_id=actor.id,
+                 version=1, payload={'full_sync': True})
     log_event(db, actor.id, 'notebook.fork', fork.id, f'{notebook_id}@{rev.version}')
     await db.commit()
     return await document_payload(db, fork, 'owner')
@@ -428,6 +462,8 @@ async def fork_notebook(notebook_id: str, body: ForkNotebook, db: AsyncSession =
 async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     nb, role = await require_notebook(db, notebook_id, actor, 'editor')
     doc = checked_document(body.document)
+    # Compute changes before CAS; event is inserted only if the write succeeds.
+    patch = document_delta(nb.document, doc, body.title)
     # Atomic compare-and-swap prevents silent overwrites across browser tabs.
     result = await db.execute(update(Notebook).where(Notebook.id == notebook_id, Notebook.version == body.version)
                               .values(title=body.title, document=doc, document_bytes=document_size(doc),
@@ -437,6 +473,8 @@ async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession =
         raise HTTPException(409, 'Notebook changed in another tab; reload before saving')
     snapshot(db, nb, version=body.version + 1, title=body.title, document=doc,
              author_id=actor.id, reason='save')
+    append_event(db, notebook_id, 'document.committed', actor_id=actor.id,
+                 version=body.version + 1, payload=patch)
     log_event(db, actor.id, 'notebook.save', notebook_id, str(body.version + 1))
     await db.commit()
     return {'version': body.version + 1}
@@ -452,6 +490,7 @@ async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), 
     await stop_runtime(db, notebook_id, actor.id)
     await db.execute(delete(NotebookPermission).where(NotebookPermission.notebook_id == notebook_id))
     await db.execute(delete(NotebookRevision).where(NotebookRevision.notebook_id == notebook_id))
+    await db.execute(delete(NotebookEvent).where(NotebookEvent.notebook_id == notebook_id))
     await db.execute(delete(ExecutionRun).where(ExecutionRun.notebook_id == notebook_id))
     await db.delete(nb)
     log_event(db, actor.id, 'notebook.delete', notebook_id)
