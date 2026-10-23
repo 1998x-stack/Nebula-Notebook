@@ -9,3 +9,4 @@ data/
 *.sqlite*
 .DS_Store
 logs/
+.pi/
