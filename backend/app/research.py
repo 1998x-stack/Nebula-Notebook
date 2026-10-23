@@ -10,6 +10,7 @@ candidate Python can mutate kernel state, input data and global variables.
 Agents must be trusted and use controlled datasets/environments.
 """
 from __future__ import annotations
+import asyncio
 import hashlib
 import json
 import math
@@ -31,6 +32,8 @@ METRIC = re.compile(r'^[A-Za-z][A-Za-z0-9_.-]{0,79}$')
 KEY = re.compile(r'^[A-Za-z0-9_-]{8,128}$')
 TAG = 'NEBULA_METRIC:'
 MAX_TRIALS = 20
+_evaluation_locks: dict[str, asyncio.Lock] = {}
+
 
 
 def _problem(message, status=422):
@@ -79,11 +82,8 @@ async def get_experiment(db, notebook_id, experiment_id):
 
 async def create_experiment(db: AsyncSession, notebook: Notebook, actor_id: str, body):
     spec = body.model_dump(mode='json')
-    if not METRIC.fullmatch(body.metric_name) or not KEY.fullmatch(body.title.replace(' ', '_')[:128]):
-        # A title is human-readable and may contain spaces/punctuation. Validate
-        # only the metric name here; titles are bounded by the API model.
-        if not METRIC.fullmatch(body.metric_name):
-            _problem('Metric name must be a simple identifier')
+    if not METRIC.fullmatch(body.metric_name):
+        _problem('Metric name must be a simple identifier')
     if not SHA.fullmatch(body.dataset_sha256) or not SHA.fullmatch(body.environment_sha256):
         _problem('Dataset and environment identifiers must be lowercase SHA-256 digests')
     cell = _cell(notebook.document, body.evaluator_cell_id)
@@ -178,16 +178,19 @@ async def register_trial(db: AsyncSession, exp: ResearchExperiment, actor_id: st
 
 def parse_metric(outputs, metric_name: str) -> float:
     """Exactly one bounded tagged evaluator stdout record. Never use Agent input."""
-    lines = []
+    chunks = []
+    size = 0
     for item in outputs or []:
         if item.get('output_type') != 'stream' or item.get('name') != 'stdout':
             continue
         value = item.get('text', '')
-        text = ''.join(value) if isinstance(value, list) else str(value)
-        if len(text) > 200_000:
+        piece = ''.join(value) if isinstance(value, list) else str(value)
+        size += len(piece)
+        if size > 200_000:
             _problem('Evaluator output too large')
-        lines.extend(text.splitlines())
-    matches = [line[len(TAG):].strip() for line in lines if line.startswith(TAG)]
+        chunks.append(piece)
+    matches = [line[len(TAG):].strip() for line in ''.join(chunks).splitlines()
+               if line.startswith(TAG)]
     if len(matches) != 1 or len(matches[0]) > 500:
         _problem('Evaluator must print exactly one NEBULA_METRIC JSON record')
     try:
@@ -269,13 +272,20 @@ async def finalize_trial(db: AsyncSession, exp: ResearchExperiment, actor_id: st
 async def research_state(db, exp):
     trials = (await db.scalars(select(ResearchTrial).where(
         ResearchTrial.experiment_id == exp.id).order_by(ResearchTrial.created_at,ResearchTrial.id))).all()
+    live_status = {}
+    for t in trials:
+        run = await db.get(ExecutionRun, t.run_id)
+        evaluation_run = await db.get(ExecutionRun, t.evaluator_run_id) if t.evaluator_run_id else None
+        live_status[t.id] = {
+            'candidate_run_status': run.status if run else 'missing',
+            'evaluator_run_status': evaluation_run.status if evaluation_run else None}
     evaluated = [t for t in trials if t.status == 'evaluated']
     evaluated.sort(key=lambda t:(t.metric_value if exp.direction == 'min' else -t.metric_value, t.created_at))
     checkpoints = (await db.scalars(select(ResearchCheckpoint).where(
         ResearchCheckpoint.experiment_id == exp.id))).all()
     best = evaluated[0] if evaluated else None
     return {'experiment': public_experiment(exp),
-            'trials': [public_trial(t) for t in trials],
+            'trials': [{**public_trial(t), **live_status[t.id]} for t in trials],
             'leaderboard': [public_trial(t) for t in evaluated],
             'best_trial_id': best.id if best else None,
             'checkpoints': [public_checkpoint(c) for c in checkpoints],
