@@ -214,3 +214,60 @@ async def test_draft_fork_preserves_local_work_without_overwriting_shared_notebo
     assert ''.join(child['document']['cells'][1]['source'])=='print("my unpublished experiment")'
     parent=(await clients.get(f"/api/notebooks/{nb['id']}")).json()
     assert parent['version']==2 and ''.join(parent['document']['cells'][1]['source'])=='print("other collaborator")'
+
+async def test_two_account_shared_merge_and_permission_revocation(clients):
+    admin, nb = await create(clients)
+    account={'email':'merge-editor@test.local','password':'StrongTestMergePassword123!'}
+    assert (await clients.post('/api/admin/users',headers=admin,json=account)).status_code==200
+    assert (await clients.put(f"/api/notebooks/{nb['id']}/shares",headers=admin,
+                              json={'email':account['email'],'role':'editor'})).status_code==200
+    base=copy.deepcopy(nb['document'])
+    mine=copy.deepcopy(base);mine['cells'][1]['source']='print("editor")'
+    theirs=copy.deepcopy(base);theirs['cells'][0]['source']='Owner changed introduction'
+    assert (await save(clients,admin,nb['id'],1,theirs)).status_code==200
+    await clients.post('/api/auth/logout')
+    editor=await login(clients,**account)
+    plan=(await preview(clients,nb['id'],1,mine)).json()
+    assert plan['can_merge'] is True and plan['latest_version']==2
+    op=uuid4().hex
+    merged=await commit(clients,editor,nb['id'],1,2,mine,operation_id=op)
+    assert merged.status_code==200
+    assert merged.json()['version']==3
+    receipt=await commit(clients,editor,nb['id'],1,2,mine,operation_id=op)
+    assert receipt.status_code==200 and receipt.json()['replayed'] is True
+    await clients.post('/api/auth/logout')
+    admin=await login(clients)
+    granted=(await clients.get(f"/api/notebooks/{nb['id']}/shares")).json()
+    other=next(g for g in granted if g['email']==account['email'])
+    assert (await clients.delete(f"/api/notebooks/{nb['id']}/shares/{other['user_id']}",
+                                  headers=admin)).status_code==200
+    await clients.post('/api/auth/logout')
+    editor=await login(clients,**account)
+    assert (await preview(clients,nb['id'],1,mine)).status_code==404
+    assert (await commit(clients,editor,nb['id'],1,2,mine,operation_id=op)).status_code==404
+
+
+async def test_draft_fork_conflicting_operation_id_never_duplicates(clients):
+    h,nb=await create(clients)
+    mine=copy.deepcopy(nb['document'])
+    path=f"/api/notebooks/{nb['id']}/merge/fork-draft"
+    payload={'base_version':1,'mine_title':'Draft','mine_document':mine,
+             'operation_id':'fork-stable-01'}
+    first=await clients.post(path,headers=h,json=payload)
+    assert first.status_code==200
+    copy2=copy.deepcopy(payload);copy2['mine_title']='Different name'
+    assert (await clients.post(path,headers=h,json=copy2)).status_code==409
+    again=await clients.post(path,headers=h,json=payload)
+    assert again.status_code==200 and again.json()['id']==first.json()['id']
+
+
+async def test_same_title_edited_on_both_sides_requires_manual_resolution(clients):
+    h,nb=await create(clients)
+    base=copy.deepcopy(nb['document'])
+    assert (await save(clients,h,nb['id'],1,base,title='Shared renamed')).status_code==200
+    p=(await preview(clients,nb['id'],1,base,title='My renamed')).json()
+    assert p['can_merge'] is False
+    assert {c['key'] for c in p['conflicts']}=={'title'}
+    resolved=(await preview(clients,nb['id'],1,base,title='My renamed',
+                            resolutions={'title':'mine'})).json()
+    assert resolved['can_merge'] is True and resolved['merged_title']=='My renamed'
