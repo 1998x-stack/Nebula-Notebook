@@ -359,7 +359,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **57 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **66 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -393,6 +393,20 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `notebook_run_cells` | `notebook_id:str`, `start:int`, `count:int`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `start` = `0`<br>`count` = `5`<br>`timeout` = `120`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
 | `notebook_version` | `notebook_id:str`, `version:int` |  |
 | `notebook_versions` | `notebook_id:str`, `limit:int`, `before:int | null` | `limit` = `50`<br>`before` = `null` |
+
+### 研究实验
+
+| Tool | 参数 | 默认 |
+|---|---|---|
+| `research_artifact_download` | `notebook_id:str`, `experiment_id:str`, `artifact_id:str`, `path:str`, `overwrite:bool` | `overwrite` = `False` |
+| `research_artifact_upload` | `notebook_id:str`, `experiment_id:str`, `trial_id:str`, `path:str`, `name:str | null` | `name` = `null` |
+| `research_artifacts` | `notebook_id:str`, `experiment_id:str` |  |
+| `research_close` | `notebook_id:str`, `experiment_id:str` |  |
+| `research_create` | `notebook_id:str`, `title:str`, `evaluator_cell_id:str`, `metric_name:str`, `direction:Literal['min', 'max']`, `dataset_sha256:str`, `environment_sha256:str`, `max_trials:int`, `trial_timeout_seconds:int`, `mode:Literal['cpu', 'gpu']` | `max_trials` = `5`<br>`trial_timeout_seconds` = `300`<br>`mode` = `'cpu'` |
+| `research_get` | `notebook_id:str`, `experiment_id:str` |  |
+| `research_list` | `notebook_id:str` |  |
+| `research_trial_finalize` | `notebook_id:str`, `experiment_id:str`, `trial_id:str`, `evaluator_run_id:str` |  |
+| `research_trial_register` | `notebook_id:str`, `experiment_id:str`, `trial_key:str`, `run_id:str`, `notebook_version:int`, `hypothesis:str` |  |
 
 ### Cell 与执行
 
