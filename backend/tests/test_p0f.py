@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import io
 import json
+import sqlite3
 import tarfile
 import tempfile
 from pathlib import Path
@@ -62,7 +63,7 @@ async def test_prune_dry_run_retains_complete_history_and_replays_after_reset(cl
                               is_disconnected=AsyncMock(return_value=False))
     stream = notebook_stream(request, nb['id'], old_id)
     reset = await asyncio.wait_for(anext(stream), 3)
-    assert reset.startswith('event: stream_reset\\n')
+    assert reset.splitlines()[0] == 'event: stream_reset'
     assert json.loads(reset.split('data: ')[1].strip())['floor'] == floor
     replayed = await asyncio.wait_for(anext(stream), 3)
     assert f'id: {original[5].id}' in replayed
@@ -128,12 +129,23 @@ def backup_module():
 async def test_backup_verify_restore_keeps_db_and_workspace_files(clients, tmp_path):
     from app.config import settings
     _, nb = await fill(clients, 3)
-    workspaces = settings.data_dir / 'workspaces' / nb['id']
+    # Use a copy of the real SQLite test DB, not the shared test DATA_DIR:
+    # earlier file-security tests intentionally leave symlink fixtures there.
+    root = tmp_path / 'isolated-source'
+    root.mkdir()
+    source = sqlite3.connect(settings.data_dir / 'nebula.db')
+    destination = sqlite3.connect(root / 'nebula.db')
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    workspaces = root / 'workspaces' / nb['id']
     workspaces.mkdir(parents=True, exist_ok=True)
     (workspaces / 'dataset.txt').write_bytes(b'pristine research dataset')
     archive = tmp_path / 'verified.tar.gz'
     util = backup_module()
-    result = util.backup(archive, settings.data_dir)
+    result = util.backup(archive, root)
     assert result['integrity'] == 'ok'
     target = tmp_path / 'fresh-restore'
     util.restore(archive, target)
