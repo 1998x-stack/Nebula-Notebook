@@ -71,12 +71,13 @@ def walk_data(root):
                 raise ValueError('Data directory contains a symlink')
         for name in files:
             path = Path(directory) / name
-            if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
-                raise ValueError('Only regular, non-symlink data files can be archived')
             relative = path.relative_to(root).as_posix()
             safe_archive_name(relative)
             if relative in IGNORED_SQLITE:
                 continue
+            if path.is_symlink() or not stat.S_ISREG(path.lstat().st_mode):
+                raise ValueError('Only regular, non-symlink data files can be archived: '
+                                 + relative)
             yield path, 'files/' + relative
 
 
