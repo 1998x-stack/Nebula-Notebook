@@ -105,7 +105,7 @@ async def _jupyter_handshake(ws) -> None:
     raise RuntimeError('Jupyter shell channel did not become ready')
 
 
-async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, list, int | None, str | None]:
+async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) -> tuple[str, list, int | None, str | None]:
     """Kernel request, bounded output collection, and explicit busy/idle status."""
     url = ('ws://127.0.0.1:' + str(rt.port) + '/api/kernels/' + str(rt.kernel_id) +
            '/channels?token=' + quote(rt.token, safe='') + '&session_id=' + uuid4().hex)
@@ -125,14 +125,34 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, li
         deadline = time.monotonic() + timeout
         outputs, count, reply = [], None, None
         budget = MAX_OUTPUT_BYTES
+        pending, pending_bytes = [], 0
+        last_sent = time.monotonic()
+
+        async def flush():
+            nonlocal pending, pending_bytes, last_sent
+            if pending and on_output is not None:
+                batch = pending
+                pending, pending_bytes = [], 0
+                last_sent = time.monotonic()
+                try:
+                    await on_output(batch)
+                except Exception:
+                    # Journal outage must not abort an executing Python cell.
+                    log.exception('Notebook output event journal failed')
+            else:
+                pending, pending_bytes = [], 0
+                last_sent = time.monotonic()
+
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise asyncio.TimeoutError()
             try:
-                packet = json.loads(await asyncio.wait_for(ws.recv(), remaining))
+                packet = json.loads(await asyncio.wait_for(ws.recv(), min(remaining, 0.2)))
             except asyncio.TimeoutError:
-                raise
+                if time.monotonic() - last_sent >= 0.2:
+                    await flush()
+                continue
             if packet.get('parent_header', {}).get('msg_id') != ident:
                 continue
             kind = packet.get('header', {}).get('msg_type')
@@ -145,12 +165,18 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, li
                     size = len(json.dumps(entry, ensure_ascii=False).encode())
                     if size <= budget:
                         outputs.append(entry)
+                        pending.append(entry)
+                        pending_bytes += size
                         budget -= size
+                        if pending_bytes >= 12_000 or time.monotonic()-last_sent >= 0.2:
+                            await flush()
                     elif budget > 120:
                         notice = {'output_type': 'stream', 'name': 'stderr',
                                   'text': '[Output truncated: job output limit reached]'}
                         outputs.append(notice)
+                        pending.append(notice)
                         budget = 0
+                        await flush()
             elif kind == 'execute_reply':
                 reply = content
                 if count is None:
@@ -162,6 +188,7 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, li
                 error = None if status == 'succeeded' else (
                     str(reply.get('ename') or 'Kernel execution failed')[:160] + ': ' +
                     str(reply.get('evalue') or '')[:400])
+                await flush()
                 return status, outputs, count, error
 
 
@@ -254,7 +281,10 @@ async def worker(run_id: str):
                     await _finish(run_id, 'cancelled')
                     return
             try:
-                status, outputs, count, error = await execute_jupyter(rt, code, timeout)
+                async def stream_batch(batch):
+                    await emit_run(run_id, 'run.output', {'outputs': batch})
+                status, outputs, count, error = await execute_jupyter(
+                    rt, code, timeout, on_output=stream_batch)
             except asyncio.TimeoutError:
                 try:
                     await interrupt_runtime(rt)
