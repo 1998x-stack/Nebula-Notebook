@@ -12,9 +12,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 from sqlalchemy import func, select
-from app.db import Base, Notebook, NotebookEvent, NotebookRevision, SessionLocal, engine
+from app.db import Notebook, NotebookEvent, NotebookRevision, SessionLocal, engine
 from app.events import compact_events, retention_floor
-from app.migrations import apply_migrations
 
 
 async def run(args):
@@ -22,9 +21,8 @@ async def run(args):
         raise SystemExit('This maintenance tool supports SQLite only')
     if args.command == 'prune-events' and args.apply and not args.offline_confirmed:
         raise SystemExit('--apply requires --offline-confirmed after API stop + verified backup')
-    async with engine.begin() as conn:
-        await apply_migrations(conn)
-        await conn.run_sync(Base.metadata.create_all)
+    # Never alter the schema during a read-only report or dry-run. Start the
+    # upgraded API once before running this CLI to ensure migrations exist.
     async with SessionLocal() as db:
         notebooks = (await db.scalars(select(Notebook).order_by(Notebook.id))).all()
         results = []
