@@ -144,6 +144,23 @@ Capture at 1440x900 or similar; use anonymized demo notebooks. Optimize screensh
 These illustrate current and proposed features; do not depict proposed features as shipped.
 -->
 
+### Execution lifecycle reliability (P0-D)
+
+Nebula now commits durable Run terminal state and `run.finished` SSE events
+**atomically**, including `interrupted` recovery after a server restart.
+Jupyter execution waits for both shell `execute_reply` and IOPub `idle`
+even if they arrive out of order. Kernel startup/handshake failures do not
+create false `uncertain` locks; after an attempted execution whose outcome
+cannot be confirmed, the gate stays locked until intentional Runtime stop.
+
+Editors can inspect `GET /api/notebooks/{id}/execution-state` for gate state,
+active jobs, required recovery and an opaque Kernel generation fingerprint
+(without exposing container IDs or secrets). Real Docker CPU arbitration and
+opt-in disconnect fault injection are provided by
+`scripts/smoke_p0d.py`; hardware acceptance remains outstanding.
+
+[Lifecycle hardening and host acceptance guide →](docs/LIFECYCLE_HARDENING.md).
+
 ### Collision-safe multi-Agent operations (P0-C)
 
 Shared editors and MCP Agents can now add, update, move and delete Cells through

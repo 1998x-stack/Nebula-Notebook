@@ -23,6 +23,20 @@
 | Agent 接入 | 54-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
 | 运维 | Ubuntu 检测、部署脚本、冒烟测试与 CI |
 
+## P0-D：执行生命周期与异常恢复强化
+
+已把 Run 结束状态和 `run.finished` SSE 事件合并到同一数据库事务，
+服务重启时未完成的 Run 会写入可续传的 `interrupted` 终态事件，
+**不会自动重复执行 Python**。Jupyter Shell 回复与 IOPub `idle`
+允许乱序抵达；连接握手失败不会误判为代码已开始执行。
+若请求确实可能发送、但无法确认结束，则继续使用 `uncertain`
+安全门禁，并通过显式停止 Runtime 恢复。
+
+`GET /api/notebooks/{id}/execution-state` 可供有权限的编辑者诊断
+执行门禁、未完成任务和 Kernel Generation；实机 CPU Docker 联调脚本
+位于 `scripts/smoke_p0d.py`。完整说明见
+[执行生命周期设计与验收](docs/LIFECYCLE_HARDENING.md)。
+
 ## P0-C：共享 Cell 完整冲突保护与统一执行互斥
 
 `cell_add`、`cell_insert`、`cell_update`、`cell_move`、

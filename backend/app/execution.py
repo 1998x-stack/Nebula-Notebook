@@ -125,13 +125,20 @@ def live_event_preview(entry: dict) -> dict:
             'metadata': {}}
 
 
-async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) -> tuple[str, list, int | None, str | None]:
+async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None,
+                          on_dispatch_attempt=None) -> tuple[str, list, int | None, str | None]:
     """Kernel request, bounded output collection, and explicit busy/idle status."""
     url = ('ws://127.0.0.1:' + str(rt.port) + '/api/kernels/' + str(rt.kernel_id) +
            '/channels?token=' + quote(rt.token, safe='') + '&session_id=' + uuid4().hex)
     async with websockets.connect(url, max_size=8_000_000, open_timeout=10, ping_interval=20) as ws:
         await _jupyter_handshake(ws)
         ident = uuid4().hex
+        # The connection and handshake completed. Immediately BEFORE writing
+        # execute_request, mark an uncertain side-effect boundary: send itself
+        # may fail after remote dispatch, so only failures before this point
+        # can safely release the Kernel gate without observing idle.
+        if on_dispatch_attempt is not None:
+            on_dispatch_attempt()
         await ws.send(json.dumps({
             'channel': 'shell',
             'header': {'msg_id': ident, 'username': 'nebula-job', 'session': uuid4().hex,
@@ -144,6 +151,7 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) 
         }))
         deadline = time.monotonic() + timeout
         outputs, count, reply = [], None, None
+        observed_idle = False
         budget = MAX_OUTPUT_BYTES
         pending, pending_bytes = [], 0
         last_sent = time.monotonic()
@@ -202,8 +210,12 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) 
                 if count is None:
                     count = content.get('execution_count')
             elif kind == 'status' and content.get('execution_state') == 'idle':
-                if reply is None:
-                    raise RuntimeError('Kernel became idle without an execute_reply')
+                observed_idle = True
+            # Jupyter shell and IOPub channels are independent. The idle
+            # notification can be observed before execute_reply; neither one
+            # alone proves completion. Both are required before releasing the
+            # exclusive Kernel gate and persisting results.
+            if observed_idle and reply is not None:
                 status = 'failed' if reply.get('status') != 'ok' or any(o['output_type'] == 'error' for o in outputs) else 'succeeded'
                 error = None if status == 'succeeded' else (
                     str(reply.get('ename') or 'Kernel execution failed')[:160] + ': ' +
@@ -213,18 +225,24 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) 
 
 
 async def _finish(run_id: str, status: str, *, outputs=None, count=None, error=None):
+    """Commit terminal status and durable event atomically; only one wins."""
+    if status not in FINAL:
+        raise ValueError(f'Invalid terminal run status: {status}')
     async with SessionLocal() as db:
         run = await db.get(ExecutionRun, run_id)
-        if not run or run.status in FINAL:
+        if not run:
             return
-        run.status = status
-        run.finished_at = utcnow()
-        run.outputs = outputs or []
-        run.execution_count = count
-        run.error = str(error)[:1000] if error else None
+        changed = await db.execute(update(ExecutionRun).where(
+            ExecutionRun.id == run_id, ExecutionRun.status.in_(ACTIVE)).values(
+                status=status, finished_at=utcnow(), outputs=outputs if outputs is not None else [],
+                execution_count=count, error=str(error)[:1000] if error else None))
+        if changed.rowcount != 1:
+            await db.rollback()
+            return
+        append_event(db, run.notebook_id, 'run.finished', actor_id=run.actor_id,
+                     run_id=run.id, cell_id=run.cell_id,
+                     payload={'status': status, 'error': str(error)[:500] if error else None})
         await db.commit()
-    await emit_run(run_id, 'run.finished', {'status': status,
-                    'error': str(error)[:500] if error else None})
 
 
 async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool:
@@ -311,9 +329,13 @@ async def worker(run_id: str):
                 async def stream_batch(batch):
                     await emit_run(run_id, 'run.output', {
                         'outputs': [live_event_preview(entry) for entry in batch]})
-                request_dispatched = True
+                def mark_dispatch_attempt():
+                    nonlocal request_dispatched
+                    request_dispatched = True
+
                 status, outputs, count, error = await execute_jupyter(
-                    rt, code, timeout, on_output=stream_batch)
+                    rt, code, timeout, on_output=stream_batch,
+                    on_dispatch_attempt=mark_dispatch_attempt)
                 kernel_idle_confirmed = True
             except asyncio.TimeoutError:
                 try:
@@ -355,11 +377,21 @@ def schedule_run(run_id: str):
 
 
 async def recover_runs():
-    """Nonterminal records are marked UNKNOWN on restart, NEVER auto-replayed."""
+    """Mark interrupted and journal outcomes together, never replay Python."""
     async with SessionLocal() as db:
-        await db.execute(update(ExecutionRun).where(ExecutionRun.status.in_(ACTIVE)).values(
-            status='interrupted', error='Server restarted; execution outcome must be verified',
-            finished_at=utcnow()))
+        pending = (await db.scalars(select(ExecutionRun).where(
+            ExecutionRun.status.in_(ACTIVE)))).all()
+        for run in pending:
+            changed = await db.execute(update(ExecutionRun).where(
+                ExecutionRun.id == run.id, ExecutionRun.status.in_(ACTIVE)).values(
+                    status='interrupted',
+                    error='Server restarted; execution outcome must be verified',
+                    finished_at=utcnow()))
+            if changed.rowcount:
+                append_event(db, run.notebook_id, 'run.finished',
+                             actor_id=run.actor_id, run_id=run.id, cell_id=run.cell_id,
+                             payload={'status': 'interrupted',
+                                      'error': 'Server restart: execution outcome unknown'})
         await db.commit()
 
 
@@ -414,7 +446,7 @@ async def submit_run(db, nb: Notebook, actor_id: str, *, cell_id: str,
 
 
 async def request_cancel(db, run: ExecutionRun):
-    if run.status in FINAL:
+    if run.status in FINAL or run.status == 'cancelling':
         return run
     if run.status == 'queued':
         run.status, run.cancel_requested, run.finished_at = 'cancelled', True, utcnow()

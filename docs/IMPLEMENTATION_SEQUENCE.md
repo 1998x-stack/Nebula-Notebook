@@ -87,6 +87,29 @@ run cancellation acknowledgement. Cover API crash + in-flight Kernel activity.
 no duplicated execution from client retry; workloads cannot starve read APIs;
 a canceled queued run is never executed.
 
+## P0-D — Execution lifecycle hardening (implemented; host verification outstanding)
+
+Atomic `run.finished` journal and terminal state, restart interruption
+events, accurate pre-dispatch/uncertain lock boundary, Jupyter reply/idle
+reordering, per-Notebook execution-state diagnostics and opaque Kernel
+generation fingerprint. See [P0-D runbook](LIFECYCLE_HARDENING.md).
+
+**Gate:** deterministic unit/fault tests in CI; real CPU Docker test via
+`scripts/smoke_p0d.py` (including optional intentionally destructive
+disconnect scenario on a disposable test installation); two registered
+Agent accounts plus browser on the same Notebook. No hardware smoke or
+public multi-tenant claim from mocked CI alone.
+
+## P0-E — Collaboration recovery and merge (planned)
+
+Base/mine/latest three-way Cell comparison, explicit resolution UI and
+branch merge. Do not silently override another editor's source.
+
+## P0-F — Storage and event reliability (planned)
+
+Migration tooling, retained history/Artifact quotas, event cursor expiry,
+snapshot compaction and verifiable backup/restore.
+
 ## P1-A — Autoresearch engine
 
 Build only after P0 passes: `Experiment`, `Trial`, `EvaluationSpec`,
