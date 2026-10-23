@@ -57,7 +57,7 @@ Do not globally publish Jupyter port `8888`. Runtime ports should remain bound t
 
 ## MCP server for LLM agents
 
-`mcp/` is an optional stdio MCP server that exposes 35 Nebula tools and two resources to Pi, Claude Desktop/Code, Codex CLI and OpenCode. It logs in through the normal API and uses the same WebSocket kernel proxy; it does not bypass auth/RBAC. Local file import/export is restricted by `NEBULA_MCP_FS_ROOT`.
+`mcp/` is an optional stdio MCP server that exposes 57 Nebula tools and two resources to Pi, Claude Desktop/Code, Codex CLI and OpenCode. It logs in through the normal API and uses the same WebSocket kernel proxy; it does not bypass auth/RBAC. Local file import/export is restricted by `NEBULA_MCP_FS_ROOT`.
 
 ```bash
 # One-time dependency setup (or let mcp/run.sh bootstrap it)
@@ -100,10 +100,47 @@ NEBULA_SMOKE_EMAIL=admin@example.com NEBULA_SMOKE_PASSWORD='your-real-password' 
 
 The smoke script requires the backend to be running and the CPU runtime image built. CI tests do not prove physical GPU behavior. For agent integration, run `mcp/.venv/bin/python mcp/test_mcp.py` after the API is up. See [Validation report](../VALIDATION_REPORT.md) and [mcp/README.md](../mcp/README.md).
 
-## Operations and backup
+## Operations, storage and verified backup (P0-F)
 
-- Back up `data/` (database + workspaces) with permissions preserved, ideally after temporarily stopping API writes and runtime activity.
-- Restrict access to `data/` and `.env` using operating-system ACLs or permissions.
-- To disconnect a runtime, use the UI or notebook runtime API; container state should not be considered persistent.
-- Rotate credentials and rebuild images when dependencies receive security updates.
-- Add quotas, metrics, log rotation, durable audit retention and stronger isolation before expanding beyond trusted internal users.
+**Before upgrading:** stop the API and all Docker Runtimes that might still be
+writing under `data/workspaces`; back up and validate a restore. A stopped
+FastAPI process alone is insufficient if Jupyter containers are still writing.
+
+```bash
+backend/.venv/bin/python scripts/storage_backup.py backup \
+  /secure-backups/nebula-offline.tar.gz --offline-confirmed
+backend/.venv/bin/python scripts/storage_backup.py verify \
+  /secure-backups/nebula-offline.tar.gz
+backend/.venv/bin/python scripts/storage_backup.py restore \
+  /secure-backups/nebula-offline.tar.gz \
+  /tmp/nebula-restored-empty --offline-confirmed
+```
+
+- The backed-up files and password hashes are **not encrypted**; protect
+  archive permissions, restrict backup directory access, and rotate storage
+  media according to your threat model. Restore only to a new empty directory.
+- Startup performs tracked forward-only SQLite migrations. A newer DB schema
+  will refuse an older server binary; no downgrade migration is promised.
+- Inventory and dry-run before event compaction:
+
+```bash
+backend/.venv/bin/python scripts/storage_admin.py report
+backend/.venv/bin/python scripts/storage_admin.py prune-events --keep 250
+
+# Only after stopping writers and verifying backup:
+backend/.venv/bin/python scripts/storage_admin.py prune-events \
+  --keep 250 --apply --offline-confirmed
+```
+
+- Old SSE clients receive `stream_reset` when their cursor predates the
+  deleted journal floor. All old Notebook snapshots are kept for independent
+  forks and P0-E merges; no automatic history deletion exists.
+- `DATA_DIR/nebula.db` (default SQLite) is supported by the bundled backup
+  tool; custom `DATABASE_URL` needs database-native backup.
+- To disconnect a Runtime, use the UI or Notebook API; volatile Kernel RAM
+  is never part of the backup.
+- Rotate credentials and rebuild images when dependencies receive security
+  updates. Add Artifact quotas, offsite encryption, log rotation and stronger
+  isolation before hosting untrusted users.
+
+[Detailed storage and restore rehearsal](STORAGE_RELIABILITY.md).

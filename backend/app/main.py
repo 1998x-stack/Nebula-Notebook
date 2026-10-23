@@ -29,6 +29,7 @@ from .security import (hash_password, verify_password, rate_check, new_session, 
                        admin_only, admin_write, require_notebook, websocket_identity)
 from .validation import default_document, checked_document
 from .history import snapshot, backfill_current_revisions
+from .migrations import apply_migrations
 from .cell_ops import apply_cell_operation
 from .merge import merge_plan, commit_merge
 from .kernel_gate import claim as claim_kernel, release as release_kernel, uncertain as uncertain_kernel, recover_gates, reset_after_runtime_stop
@@ -36,7 +37,7 @@ from .events import append_event, cursor as event_cursor, delta as document_delt
 from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtime
 from .execution import (schedule_run, recover_runs, shutdown_runs, submit_run,
                         request_cancel, public_run, ACTIVE)
-from .db import ExecutionRun, NotebookEvent, CellOperation, KernelGate
+from .db import ExecutionRun, NotebookEvent, CellOperation, KernelGate, EventRetention
 from typing import Literal
 
 
@@ -55,20 +56,10 @@ def kernel_generation(rt: Runtime | None) -> str | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
+        # Versioned forward-only migrations must run BEFORE model.create_all,
+        # which cannot add missing columns to legacy SQLite databases.
+        await apply_migrations(conn)
         await conn.run_sync(Base.metadata.create_all)
-        # create_all never alters existing tables, so add the folders column for
-        # databases created before folders existed (SQLite: safe, O(1) metadata op).
-        if engine.dialect.name == 'sqlite':
-            cols = {row[1] for row in (await conn.exec_driver_sql('PRAGMA table_info(notebooks)')).fetchall()}
-            if 'folder_id' not in cols:
-                await conn.exec_driver_sql('ALTER TABLE notebooks ADD COLUMN folder_id VARCHAR(36)')
-            if 'document_bytes' not in cols:
-                await conn.exec_driver_sql(
-                    'ALTER TABLE notebooks ADD COLUMN document_bytes INTEGER NOT NULL DEFAULT 0')
-            if 'forked_from_notebook_id' not in cols:
-                await conn.exec_driver_sql('ALTER TABLE notebooks ADD COLUMN forked_from_notebook_id VARCHAR(36)')
-            if 'forked_from_version' not in cols:
-                await conn.exec_driver_sql('ALTER TABLE notebooks ADD COLUMN forked_from_version INTEGER')
     await recover_runs()
     await recover_gates()
     async with SessionLocal() as db:
@@ -636,6 +627,7 @@ async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), 
     await db.execute(delete(NotebookPermission).where(NotebookPermission.notebook_id == notebook_id))
     await db.execute(delete(NotebookRevision).where(NotebookRevision.notebook_id == notebook_id))
     await db.execute(delete(NotebookEvent).where(NotebookEvent.notebook_id == notebook_id))
+    await db.execute(delete(EventRetention).where(EventRetention.notebook_id == notebook_id))
     await db.execute(delete(CellOperation).where(CellOperation.notebook_id == notebook_id))
     await db.execute(delete(ExecutionRun).where(ExecutionRun.notebook_id == notebook_id))
     await db.delete(nb)

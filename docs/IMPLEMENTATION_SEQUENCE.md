@@ -115,10 +115,21 @@ multi-account ACL, revocation, duplicate retries, source conflict, order
 conflict and historical snapshots. Real two-Pi browser acceptance remains
 outstanding. This is **not** CRDT or arbitrary Notebook branch DAG merge.
 
-## P0-F — Storage and event reliability (planned)
+## P0-F — Storage and event reliability (foundation implemented; host verification pending)
 
-Migration tooling, retained history/Artifact quotas, event cursor expiry,
-snapshot compaction and verifiable backup/restore.
+Added tracked forward-only SQLite schema upgrades, explicit notebook event
+retention floors, `stream_reset` SSE cursor recovery, frontend authoritative
+resync with dirty-draft preservation, read-only inventory / manual offline
+compaction, and verified SQLite + Workspace backup / safe empty-target restore.
+
+**Intentionally not automatic:** historic revision pruning would invalidate
+the product's "fork any saved version" and three-way merge semantics. Existing
+snapshot history remains intact. Artifact object storage, compressed snapshot
+deduplication with pinned lineage, online consistent workspace snapshots,
+offsite encryption, distributed event bus and tenant quotas remain later
+tasks; do not advertise them as shipped.
+
+See [P0-F operations and acceptance](STORAGE_RELIABILITY.md).
 
 ## P1-A — Autoresearch engine
 

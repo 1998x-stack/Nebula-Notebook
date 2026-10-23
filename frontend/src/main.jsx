@@ -447,6 +447,21 @@ function NotebookEditor({id,user,back,logout}) {
          chain=chain.then(()=>handleEvent(event)).catch(()=>reloadLatest().catch(()=>{}));
        }catch{chain=chain.then(()=>reloadLatest()).catch(()=>{})}
      });
+     source.addEventListener('stream_reset',message=>{
+       if(closed||thisId!==requestId)return;
+       let info={};
+       try{info=JSON.parse(message.data)}catch{}
+       setNotice('Some old live events were compacted. Reconcile the saved Notebook before continuing.');
+       if(dirtyRef.current||savingRef.current){
+         // Never lose unsaved edits just because the replay window expired.
+         mergeBlockedRef.current=true;
+         setMergeOpen(true);
+         return;
+       }
+       chain=chain.then(()=>reloadLatest()).catch(()=>{
+         setNotice('Live event history expired; reload the Notebook to resynchronize.');
+       });
+     });
      source.addEventListener('access_revoked',()=>{
        setNotice('Notebook access was revoked or your session expired.');
        disconnect();

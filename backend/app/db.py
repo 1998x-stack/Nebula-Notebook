@@ -148,6 +148,14 @@ class CellOperation(Base):
     __table_args__ = (UniqueConstraint('notebook_id', 'operation_id', name='uq_notebook_operation'),)
 
 
+class EventRetention(Base):
+    """Per-Notebook high-water mark for events intentionally pruned by admin."""
+    __tablename__ = 'event_retention'
+    notebook_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    pruned_through_id: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class NotebookEvent(Base):
     """Durable, globally monotonic SSE cursor. Records are scoped by notebook ACL."""
     __tablename__ = 'notebook_events'
