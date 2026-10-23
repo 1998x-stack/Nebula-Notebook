@@ -9,11 +9,11 @@ beta, not a safe public arbitrary-code execution service.
 | Priority | Topic | Observation / risk | Acceptance test |
 |---|---|---|---|
 | P0 | Read-only MCP | `runtime_diagnose` and nested workspace reads execute Python; do not mislabel as harmless read | Read-only instance denies all Kernel execution |
-| P0 | Run window conflict | `run_cells` removed `_raw` before a retry; concurrent edits could lose outputs | Inject one 409, then save the original outputs |
+| P0 | Run window conflict | `run_cells` removed `_raw` before a retry; concurrent edits could lose outputs | Inject one 409, then save original outputs; reject stale source after external mutation |
 | P0 | Timeout | Timeouts were treated as continuing success in stop-on-error loops | Timeout halts the remaining window |
 | P0 | External changes in editor | Version polling MVP added; true streaming/replay still missing | Validate 2.5s visible/15s hidden polling and dirty-edit conflict handling; next implement SSE |
 | P1 | Variable visibility | No dedicated variable metadata/inspection MCP tool | Inspect name/type/shape/dtype/device; no whole dataset payload |
-| P1 | Long research jobs | MCP request is synchronous, and run windows use moving ordinal indexes | Stable run IDs, cell ID snapshots, idempotency keys, cancel/status APIs |
+| P1 | Long research jobs | MCP request is synchronous, and run windows use moving ordinal indexes | Implemented: count>0 validation and source-change rejection; planned: stable run IDs, cell ID snapshots, idempotency keys, cancel/status APIs |
 | P1 | Output fan-out | Agent stream tied to its kernel WS; browser lacks source-cell mapping | Event protocol with `cell_id`, `run_id`, sequence and resume cursor |
 | P1 | Sandbox | Docker API access is highly privileged; workspace Python executes arbitrary code | Threat model, private-only deployment, quotas and egress policy |
 | P2 | Multiple kernels | `python3` hardcoded throughout runtime + metadata + editor | R/C++ dedicated images and compatible kernelspec contract |
