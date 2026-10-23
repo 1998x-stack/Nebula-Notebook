@@ -123,6 +123,21 @@ class ExecutionRun(Base):
                                       name='uq_execution_run_idempotency'),)
 
 
+class CellOperation(Base):
+    """One immutable operation result per Notebook/op ID, independent of Agent."""
+    __tablename__ = 'cell_operations'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    notebook_id: Mapped[str] = mapped_column(String(36), index=True)
+    actor_id: Mapped[str] = mapped_column(String(36))
+    operation_id: Mapped[str] = mapped_column(String(128))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    expected_version: Mapped[int] = mapped_column(Integer)
+    committed_version: Mapped[int] = mapped_column(Integer)
+    result: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    __table_args__ = (UniqueConstraint('notebook_id', 'operation_id', name='uq_notebook_operation'),)
+
+
 class NotebookEvent(Base):
     """Durable, globally monotonic SSE cursor. Records are scoped by notebook ACL."""
     __tablename__ = 'notebook_events'
