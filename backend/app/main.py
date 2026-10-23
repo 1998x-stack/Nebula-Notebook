@@ -33,7 +33,7 @@ from .events import append_event, cursor as event_cursor, delta as document_delt
 from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtime
 from .execution import (schedule_run, recover_runs, shutdown_runs, submit_run,
                         request_cancel, public_run, ACTIVE)
-from .db import ExecutionRun, NotebookEvent, CellOperation
+from .db import ExecutionRun, NotebookEvent, CellOperation, KernelGate
 from typing import Literal
 
 
@@ -684,6 +684,39 @@ async def cancel_execution_run(notebook_id: str, run_id: str,
         raise HTTPException(403, 'Only the run creator or notebook owner can cancel')
     await request_cancel(db, run)
     return public_run(run)
+
+
+@app.get('/api/notebooks/{notebook_id}/execution-state')
+async def execution_state(notebook_id: str, db: AsyncSession = Depends(get_db),
+                          actor=Depends(current_user)):
+    """Read-only diagnosis of Kernel arbitration and durable execution state.
+
+    Restricted to editors because run metadata, even without outputs, is
+    confidential to collaborators. No auto-clear of uncertain gates is offered.
+    """
+    await require_notebook(db, notebook_id, actor, 'editor')
+    gate = await db.get(KernelGate, notebook_id)
+    rt = await db.get(Runtime, notebook_id)
+    runs = (await db.scalars(select(ExecutionRun).where(
+        ExecutionRun.notebook_id == notebook_id,
+        ExecutionRun.status.in_(ACTIVE)).order_by(ExecutionRun.created_at)
+        .limit(30))).all()
+    return {
+        'notebook_id': notebook_id,
+        'gate': None if gate is None else {
+            'kind': gate.kind, 'state': gate.state,
+            'since': gate.created_at.isoformat() if gate.created_at else None},
+        'runtime': {'mode': rt.mode, 'status': rt.status} if rt else
+                   {'mode': None, 'status': 'stopped'},
+        'active_runs': [{'run_id': run.id, 'cell_id': run.cell_id,
+                         'status': run.status, 'cancel_requested': bool(run.cancel_requested)}
+                        for run in runs],
+        'recovery_required': gate is not None and gate.state == 'uncertain',
+        'recovery_instruction': (
+            'Outcome unknown. Inspect outputs and workspace, then stop this '
+            'Notebook Runtime to clear the gate; Kernel memory will be lost.'
+            if gate is not None and gate.state == 'uncertain' else None),
+    }
 
 
 @app.get('/api/notebooks/{notebook_id}/runtime')
