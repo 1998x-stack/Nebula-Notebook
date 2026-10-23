@@ -62,7 +62,7 @@ async def test_prune_dry_run_retains_complete_history_and_replays_after_reset(cl
                               is_disconnected=AsyncMock(return_value=False))
     stream = notebook_stream(request, nb['id'], old_id)
     reset = await asyncio.wait_for(anext(stream), 3)
-    assert 'event: stream_reset\\n' in reset
+    assert reset.startswith('event: stream_reset\\n')
     assert json.loads(reset.split('data: ')[1].strip())['floor'] == floor
     replayed = await asyncio.wait_for(anext(stream), 3)
     assert f'id: {original[5].id}' in replayed
