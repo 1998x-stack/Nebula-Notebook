@@ -125,13 +125,20 @@ def live_event_preview(entry: dict) -> dict:
             'metadata': {}}
 
 
-async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) -> tuple[str, list, int | None, str | None]:
+async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None,
+                          on_dispatch_attempt=None) -> tuple[str, list, int | None, str | None]:
     """Kernel request, bounded output collection, and explicit busy/idle status."""
     url = ('ws://127.0.0.1:' + str(rt.port) + '/api/kernels/' + str(rt.kernel_id) +
            '/channels?token=' + quote(rt.token, safe='') + '&session_id=' + uuid4().hex)
     async with websockets.connect(url, max_size=8_000_000, open_timeout=10, ping_interval=20) as ws:
         await _jupyter_handshake(ws)
         ident = uuid4().hex
+        # The connection and handshake completed. Immediately BEFORE writing
+        # execute_request, mark an uncertain side-effect boundary: send itself
+        # may fail after remote dispatch, so only failures before this point
+        # can safely release the Kernel gate without observing idle.
+        if on_dispatch_attempt is not None:
+            on_dispatch_attempt()
         await ws.send(json.dumps({
             'channel': 'shell',
             'header': {'msg_id': ident, 'username': 'nebula-job', 'session': uuid4().hex,
@@ -144,6 +151,7 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) 
         }))
         deadline = time.monotonic() + timeout
         outputs, count, reply = [], None, None
+        observed_idle = False
         budget = MAX_OUTPUT_BYTES
         pending, pending_bytes = [], 0
         last_sent = time.monotonic()
@@ -202,8 +210,12 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) 
                 if count is None:
                     count = content.get('execution_count')
             elif kind == 'status' and content.get('execution_state') == 'idle':
-                if reply is None:
-                    raise RuntimeError('Kernel became idle without an execute_reply')
+                observed_idle = True
+            # Jupyter shell and IOPub channels are independent. The idle
+            # notification can be observed before execute_reply; neither one
+            # alone proves completion. Both are required before releasing the
+            # exclusive Kernel gate and persisting results.
+            if observed_idle and reply is not None:
                 status = 'failed' if reply.get('status') != 'ok' or any(o['output_type'] == 'error' for o in outputs) else 'succeeded'
                 error = None if status == 'succeeded' else (
                     str(reply.get('ename') or 'Kernel execution failed')[:160] + ': ' +
@@ -311,9 +323,13 @@ async def worker(run_id: str):
                 async def stream_batch(batch):
                     await emit_run(run_id, 'run.output', {
                         'outputs': [live_event_preview(entry) for entry in batch]})
-                request_dispatched = True
+                def mark_dispatch_attempt():
+                    nonlocal request_dispatched
+                    request_dispatched = True
+
                 status, outputs, count, error = await execute_jupyter(
-                    rt, code, timeout, on_output=stream_batch)
+                    rt, code, timeout, on_output=stream_batch,
+                    on_dispatch_attempt=mark_dispatch_attempt)
                 kernel_idle_confirmed = True
             except asyncio.TimeoutError:
                 try:
