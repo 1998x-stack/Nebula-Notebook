@@ -341,7 +341,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **54 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **56 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -367,6 +367,8 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `notebook_get` | `notebook_id:str`, `include_outputs:bool`, `include_data:bool` | `include_outputs` = `False`<br>`include_data` = `False` |
 | `notebook_import` | `path:str`, `title:str | null` | `title` = `null` |
 | `notebook_list` | `folder_id:str | null` | `folder_id` = `null` |
+| `notebook_merge_commit` | `notebook_id:str`, `base_version:int`, `expected_latest_version:int`, `mine_title:str`, `mine_document:dict`, `operation_id:str`, `resolutions:dict[str, Literal['mine', 'theirs']] | None` | `resolutions` = `null` |
+| `notebook_merge_preview` | `notebook_id:str`, `base_version:int`, `mine_title:str`, `mine_document:dict`, `resolutions:dict[str, Literal['mine', 'theirs']] | None` | `resolutions` = `null` |
 | `notebook_move` | `notebook_id:str`, `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_rename` | `notebook_id:str`, `title:str` |  |
 | `notebook_run_cells` | `notebook_id:str`, `start:int`, `count:int`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `start` = `0`<br>`count` = `5`<br>`timeout` = `120`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
