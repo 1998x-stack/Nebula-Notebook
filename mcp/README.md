@@ -230,8 +230,13 @@ run_cancel(notebook_id, run_id)                   # request interrupt
 Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_RUNS.md)。
 
 共享编辑同一个 Cell 时，Agent 可向 `cell_update` 提交 `expected_version`。
-若共享原件已更新就返回冲突；不传参则保持旧客户端自动重试行为。
-新增、删除、移动的 CAS 前置条件将在下一阶段扩展。
+现在 `cell_add` / `cell_insert` / `cell_update` / `cell_delete` /
+`cell_move` 都经过后端同一条严格 CAS 路径。每次操作应携带从
+`notebook_get` 读取的 `expected_version` 和客户端生成的唯一
+`operation_id`；网络故障重试时复用完全相同的两个字段和其他参数。
+不同修改使用新的 ID。409 后不要悄悄自动重试覆盖，请读取新版本，
+比较改动或从历史版本 Fork。未传 expected_version 时，MCP 会读取
+当前版本作为该次操作的基线，不会自行在冲突后自动改写。
 
 ### Agent execution visible in the browser (P0-B)
 
@@ -372,15 +377,15 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 | Tool | 参数 | 默认 |
 |---|---|---|
-| `cell_add` | `notebook_id:str`, `source:str`, `cell_type:Literal['code', 'markdown', 'raw']`, `index:int | null`, `after_cell_id:str | null` | `source` = `''`<br>`cell_type` = `'code'`<br>`index` = `null`<br>`after_cell_id` = `null` |
-| `cell_delete` | `notebook_id:str`, `cell_id:str | null`, `index:int | null` | `cell_id` = `null`<br>`index` = `null` |
+| `cell_add` | `notebook_id:str`, `source:str`, `cell_type:Literal['code', 'markdown', 'raw']`, `index:int | null`, `after_cell_id:str | null`, `expected_version:int | null`, `operation_id:str | null` | `source` = `''`<br>`cell_type` = `'code'`<br>`index` = `null`<br>`after_cell_id` = `null`<br>`expected_version` = `null`<br>`operation_id` = `null` |
+| `cell_delete` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `expected_version:int | null`, `operation_id:str | null` | `cell_id` = `null`<br>`index` = `null`<br>`expected_version` = `null`<br>`operation_id` = `null` |
 | `cell_get` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `include_outputs:bool`, `include_data:bool` | `cell_id` = `null`<br>`index` = `null`<br>`include_outputs` = `False`<br>`include_data` = `False` |
-| `cell_insert` | `notebook_id:str`, `source:str`, `cell_type:Literal['code', 'markdown', 'raw']`, `index:int | null`, `after_cell_id:str | null` | `source` = `''`<br>`cell_type` = `'code'`<br>`index` = `null`<br>`after_cell_id` = `null` |
+| `cell_insert` | `notebook_id:str`, `source:str`, `cell_type:Literal['code', 'markdown', 'raw']`, `index:int | null`, `after_cell_id:str | null`, `expected_version:int | null`, `operation_id:str | null` | `source` = `''`<br>`cell_type` = `'code'`<br>`index` = `null`<br>`after_cell_id` = `null`<br>`expected_version` = `null`<br>`operation_id` = `null` |
 | `cell_list` | `notebook_id:str`, `include_outputs:bool`, `include_data:bool` | `include_outputs` = `False`<br>`include_data` = `False` |
-| `cell_move` | `notebook_id:str`, `new_index:int`, `cell_id:str | null`, `index:int | null` | `cell_id` = `null`<br>`index` = `null` |
+| `cell_move` | `notebook_id:str`, `new_index:int`, `cell_id:str | null`, `index:int | null`, `expected_version:int | null`, `operation_id:str | null` | `cell_id` = `null`<br>`index` = `null`<br>`expected_version` = `null`<br>`operation_id` = `null` |
 | `cell_run` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `timeout:float`, `persist:bool`, `include_data:bool` | `cell_id` = `null`<br>`index` = `null`<br>`timeout` = `60`<br>`persist` = `True`<br>`include_data` = `False` |
 | `cell_run_all` | `notebook_id:str`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
-| `cell_update` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `source:str | null`, `cell_type:Literal['code', 'markdown', 'raw'] | None`, `expected_version:int | null` | `cell_id` = `null`<br>`index` = `null`<br>`source` = `null`<br>`cell_type` = `null`<br>`expected_version` = `null` |
+| `cell_update` | `notebook_id:str`, `cell_id:str | null`, `index:int | null`, `source:str | null`, `cell_type:Literal['code', 'markdown', 'raw'] | None`, `expected_version:int | null`, `operation_id:str | null` | `cell_id` = `null`<br>`index` = `null`<br>`source` = `null`<br>`cell_type` = `null`<br>`expected_version` = `null`<br>`operation_id` = `null` |
 | `code_execute` | `notebook_id:str`, `code:str`, `timeout:float`, `persist:bool`, `include_data:bool` | `timeout` = `60`<br>`persist` = `False`<br>`include_data` = `False` |
 | `run_cancel` | `notebook_id:str`, `run_id:str` |  |
 | `run_status` | `notebook_id:str`, `run_id:str` |  |
