@@ -350,8 +350,8 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `notebook_move` | `notebook_id:str`, `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_rename` | `notebook_id:str`, `title:str` |  |
 | `notebook_run_cells` | `notebook_id:str`, `start:int`, `count:int`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `start` = `0`<br>`count` = `5`<br>`timeout` = `120`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
-| `notebook_versions` | `notebook_id:str`, `limit:int`, `before:int | null` | `limit` = `50`<br>`before` = `null` |
 | `notebook_version` | `notebook_id:str`, `version:int` |  |
+| `notebook_versions` | `notebook_id:str`, `limit:int`, `before:int | null` | `limit` = `50`<br>`before` = `null` |
 
 ### Cell 与执行
 
