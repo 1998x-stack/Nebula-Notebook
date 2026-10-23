@@ -1,11 +1,11 @@
-# Nebula Notebook — Self-Hosted Jupyter Notebook with CPU/GPU Runtimes
+# Nebula Notebook — Agent-Native, Self-Hosted Jupyter Notebook with MCP and CPU/GPU Runtimes
 
 [![CI](https://github.com/1998x-stack/Nebula-Notebook/actions/workflows/ci.yml/badge.svg)](https://github.com/1998x-stack/Nebula-Notebook/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)](backend/requirements.txt)
 [![Status: Beta](https://img.shields.io/badge/status-beta-orange)](SECURITY.md)
 
-**Nebula Notebook is an open-source, self-hosted alternative to cloud-hosted Python notebooks inspired by Google Colab and Jupyter.** Run `.ipynb` notebooks in your browser with a React editor, a real IPython kernel, Docker-managed CPU runtimes, and optional NVIDIA GPU execution verified inside the container. Notebook sharing uses owner, editor, and viewer roles.
+**Nebula Notebook is an open-source, agent-native Jupyter notebook workspace: use its web editor or MCP tools from coding agents such as Pi, OpenCode, Claude and Codex.** It is independently developed and inspired by interactive notebook workflows such as Google Colab and Jupyter. Run `.ipynb` notebooks in your browser with a React editor, a real IPython kernel, Docker-managed CPU runtimes, and optional NVIDIA GPU execution verified inside the container. Notebook sharing uses owner, editor, and viewer roles.
 
 **[中文文档](README.zh-CN.md)** · **[Quick start](#quick-start)** · **[Architecture](docs/ARCHITECTURE.md)** · **[Deployment](docs/DEPLOYMENT.md)** · **[FAQ](docs/FAQ.md)** · **[Security](SECURITY.md)** · **[Contributing](CONTRIBUTING.md)**
 
