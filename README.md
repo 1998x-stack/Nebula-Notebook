@@ -120,7 +120,7 @@ pi mcp list              # connected, 47 tools
 mcp/.venv/bin/python mcp/test_mcp.py
 ```
 
-Agent-facing extensions include `kernel_variables` (bounded metadata-only inspection of live Python objects); this requires execution permission and does not auto-start a runtime. For a practical workflow, see [Agent setup for Pi, OpenCode, Claude and Codex](docs/AGENT_SETUP.md), the [autoresearch prompt](examples/autoresearch-prompt.txt), [Agent-native roadmap](docs/AGENT_NATIVE_ROADMAP.md), and [multi-kernel design](docs/MULTI_KERNEL.md).
+Persisted cross-client Notebook changes are automatically reflected in an open editor using a lightweight version probe (approximately 2.5 seconds when visible); streaming execution progress from another agent is not yet available. Agent-facing extensions include `kernel_variables` (bounded metadata-only inspection of live Python objects); this requires execution permission and does not auto-start a runtime. For a practical workflow, see [Agent setup for Pi, OpenCode, Claude and Codex](docs/AGENT_SETUP.md), the [autoresearch prompt](examples/autoresearch-prompt.txt), [Agent-native roadmap](docs/AGENT_NATIVE_ROADMAP.md), and [multi-kernel design](docs/MULTI_KERNEL.md).
 
 The MCP server is intended for a trusted local agent. Code execution is arbitrary Python in the notebook container; use a dedicated user and keep the API on localhost or a private tunnel. See **[mcp/README.md](mcp/README.md)** for the full tool catalog, workflows, environment variables and security model.
 

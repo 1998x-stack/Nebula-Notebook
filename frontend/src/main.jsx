@@ -173,6 +173,16 @@ function Dashboard({user, open, openFolder, goHome, folderId, logout}) {
  const refresh=useCallback(async()=>{
    try{const [nbs,fls]=await Promise.all([api('/notebooks'),api('/folders')]);setItems(nbs);setFolders(fls);setFoldersLoaded(true)}
    catch(e){setError(e.message)}},[]);
+ // Keep the dashboard current when an MCP agent creates or moves notebooks.
+ useEffect(()=>{
+   let timer,closed=false;
+   const sync=async()=>{if(closed)return;
+     if(!document.hidden)await refresh();
+     if(!closed)timer=setTimeout(sync,document.hidden?20000:5000);
+   };
+   timer=setTimeout(sync,5000);
+   return()=>{closed=true;clearTimeout(timer)};
+ },[refresh]);
  // Fetch once per mount: navigating between folders must not reset/refetch the
  // whole dashboard (that caused a flash of an empty page).
  useEffect(()=>{refresh()},[refresh]);
@@ -300,16 +310,54 @@ function NotebookEditor({id,user,back,logout}) {
  const [error,setError]=useState(''),[notice,setNotice]=useState(''),[saving,setSaving]=useState('saved'),[sharing,setSharing]=useState(false),[filesOpen,setFilesOpen]=useState(false),[busy,setBusy]=useState(false),[channelReady,setChannelReady]=useState(false);
  const [dirty,setDirty]=useState(false),[revision,setRevision]=useState(0),[saveTick,setSaveTick]=useState(0),[runningIds,setRunningIds]=useState({});
  const socket=useRef(null),versions=useRef(1),revisions=useRef(0),savingRef=useRef(false),pending=useRef(new Map()),latestDoc=useRef(null),latestTitle=useRef('');
+ const dirtyRef=useRef(false),lastExternalVersion=useRef(0);
  const canEdit = !!entry && entry.role!=='viewer';
  const [folderCrumb,setFolderCrumb]=useState(null);
- function editDoc(fn){setDoc(prev=>{const next=typeof fn==='function'?fn(prev):fn;latestDoc.current=next;return next});revisions.current++;setRevision(revisions.current);setDirty(true)}
+ function editDoc(fn){setDoc(prev=>{const next=typeof fn==='function'?fn(prev):fn;latestDoc.current=next;return next});revisions.current++;dirtyRef.current=true;setRevision(revisions.current);setDirty(true)}
  function updateCell(index,patch){editDoc(d=>({...d,cells:d.cells.map((c,i)=>i===index?{...c,...patch}:c)}))}
  const fetchRuntime=useCallback(async()=>{try{setRuntime(await api(`/notebooks/${id}/runtime`))}catch{}},[id]);
  useEffect(()=>{let active=true; (async()=>{try{const n=await api(`/notebooks/${id}`);if(!active)return;setEntry(n);setDoc(normalize(n.document));latestDoc.current=normalize(n.document);setTitle(n.title);latestTitle.current=n.title;versions.current=n.version;setRuntime(n.runtime||{mode:null,status:'stopped'});if(n.runtime?.status==='ready')connectChannels();setCaps(await api('/runtime/capabilities'));
    if(n.folder_id){try{const folders=await api('/folders');const f=folders.find(x=>x.id===n.folder_id);if(active&&f)setFolderCrumb({id:f.id,name:f.name})}catch{}}
  }catch(e){if(active)setError(e.message)}})();return()=>{active=false;socket.current?.close()}},[id]);
- const save=useCallback(async()=>{if(!canEdit||savingRef.current||!dirty||!latestDoc.current)return;const at=revisions.current;const snapshot=latestDoc.current;const name=latestTitle.current; savingRef.current=true;setSaving('saving');try{const result=await api(`/notebooks/${id}`,{method:'PUT',body:JSON.stringify({document:snapshot,title:name,version:versions.current})});versions.current=result.version;if(revisions.current===at){setDirty(false);setSaving('saved')}else{setSaving('unsaved')}}catch(e){setError(e.message);setSaving('error')}finally{savingRef.current=false;if(revisions.current!==at)setSaveTick(x=>x+1)}},[canEdit,dirty,id]);
+ const save=useCallback(async()=>{if(!canEdit||savingRef.current||!dirty||!latestDoc.current)return;const at=revisions.current;const snapshot=latestDoc.current;const name=latestTitle.current; savingRef.current=true;setSaving('saving');try{const result=await api(`/notebooks/${id}`,{method:'PUT',body:JSON.stringify({document:snapshot,title:name,version:versions.current})});versions.current=result.version;if(revisions.current===at){dirtyRef.current=false;setDirty(false);setSaving('saved')}else{setSaving('unsaved')}}catch(e){setError(e.message);setSaving('error')}finally{savingRef.current=false;if(revisions.current!==at)setSaveTick(x=>x+1)}},[canEdit,dirty,id]);
  useEffect(()=>{if(!dirty||!canEdit)return;const t=setTimeout(save,1100);return()=>clearTimeout(t)},[revision,saveTick,dirty,save,canEdit]);
+ // Version-only polling: no large document transfer on unchanged revisions.
+ // Never replace unsaved or in-flight browser edits with an external MCP write.
+ useEffect(()=>{
+   if(!entry)return;
+   let closed=false,timer=null;
+   async function syncExternal(){
+     try{
+       const revision=await api(`/notebooks/${id}/revision`);
+       if(!closed&&revision.version>versions.current){
+         if(dirtyRef.current||savingRef.current){
+           if(lastExternalVersion.current!==revision.version){
+             lastExternalVersion.current=revision.version;
+             setNotice('Notebook changed in another client. Save or resolve your edits before reloading.');
+           }
+         }else{
+           const current=await api(`/notebooks/${id}`);
+           if(!closed&&current.version>versions.current&&!dirtyRef.current&&!savingRef.current){
+             const newDoc=normalize(current.document);
+             versions.current=current.version;
+             latestDoc.current=newDoc;setDoc(newDoc);
+             latestTitle.current=current.title;setTitle(current.title);
+             setEntry(current);
+             setSaving('saved');
+             lastExternalVersion.current=0;
+             setNotice('Notebook updated from another client');
+           }
+         }
+       }
+     }catch(e){if(!closed&&e?.message?.includes('403'))setNotice('Notebook access changed; reload to verify permissions.')}
+     finally{if(!closed)timer=setTimeout(syncExternal,document.hidden?15000:2500)}
+   }
+   timer=setTimeout(syncExternal,2500);
+   const onVisibility=()=>{if(!document.hidden){clearTimeout(timer);timer=setTimeout(syncExternal,250)}};
+   document.addEventListener('visibilitychange',onVisibility);
+   return()=>{closed=true;clearTimeout(timer);document.removeEventListener('visibilitychange',onVisibility)};
+ },[id,entry?.id]);
+
  useEffect(()=>{if(!dirty||!canEdit)return;const handler=e=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[dirty,canEdit]);
  function changeTitle(t){setTitle(t);latestTitle.current=t;revisions.current++;setRevision(revisions.current);setDirty(true)}
  function move(i,delta){editDoc(d=>{const arr=[...d.cells];const j=i+delta;if(j<0||j>=arr.length)return d;[arr[i],arr[j]]=[arr[j],arr[i]];return {...d,cells:arr}})}

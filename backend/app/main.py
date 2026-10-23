@@ -316,6 +316,15 @@ async def get_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), act
     return await document_payload(db, nb, role)
 
 
+@app.get('/api/notebooks/{notebook_id}/revision')
+async def notebook_revision(notebook_id: str, db: AsyncSession = Depends(get_db),
+                            actor=Depends(current_user)):
+    """Small authenticated version probe for low-cost cross-client synchronization."""
+    nb, _ = await require_notebook(db, notebook_id, actor)
+    return {'id': nb.id, 'version': nb.version,
+            'updated_at': nb.updated_at.isoformat() if nb.updated_at else None}
+
+
 @app.put('/api/notebooks/{notebook_id}')
 async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     nb, role = await require_notebook(db, notebook_id, actor, 'editor')

@@ -79,8 +79,8 @@ Add the local command definition in `opencode.json` (sample:
 3. Check `notebook_list`, then create a small demo notebook.
 4. Start CPU Runtime; run `print("hello")` using `cell_run`.
 5. Invoke `kernel_variables` after defining a scalar in the same kernel.
-6. Verify the saved output from the Nebula browser. Browser refresh is currently
-   needed to see writes made by another client in real time.
+6. Verify the saved output from the Nebula browser. The browser polls lightweight notebook versions and reloads persisted MCP edits
+   automatically (about 2.5s visible / 15s hidden); live streaming during execution is not yet supported.
 
 Caveats: a separate stdio MCP process may have a separate HTTP session; all
 use the same Nebula backend and permissions. A host-side launch can access

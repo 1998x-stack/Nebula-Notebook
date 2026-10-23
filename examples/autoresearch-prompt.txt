@@ -43,9 +43,9 @@ EXPERIMENT TRACKING:
 trial_id | code_digest | hypothesis | seed | metric | duration_s | status | decision | notes
 
 REAL-TIME VIEW:
-Tell the user to open /notebook/<id>. Current Nebula persists MCP changes to
-the shared document, but true live cross-client replay requires an event feed;
-for now the user may refresh the page. Do not claim live synchronization works.
+Tell the user to open /notebook/<id>. Current Nebula persists MCP changes to the shared document; browser versions
+are polled (about 2.5s visible, 15s hidden). Outputs appear after successful
+save. True stream events/replay during execution are still planned.
 
 STOP WHEN: iteration budget met, GPU/memory quota exceeded, evaluation changed,
 results cannot be verified, or the user interrupts. Return an experiment summary:
