@@ -159,7 +159,8 @@ async def notebook_stream(request: Request, notebook_id: str, after: int) -> Asy
                 yield 'event: access_revoked\ndata: {}\n\n'
                 return
             floor = await retention_floor(db, notebook_id)
-            newest = await cursor(db, notebook_id)
+            newest = max(floor, int(await db.scalar(select(func.max(NotebookEvent.id)).where(
+                NotebookEvent.notebook_id == notebook_id)) or 0))
             reset_reason = (
                 'pruned' if position < floor
                 else 'invalid_future_cursor' if position > newest else None)
@@ -174,9 +175,9 @@ async def notebook_stream(request: Request, notebook_id: str, after: int) -> Asy
                     NotebookEvent.notebook_id == notebook_id, NotebookEvent.id > position)
                     .order_by(NotebookEvent.id).limit(MAX_EVENTS_PER_QUERY))).all()
         if reset_reason:
-            yield ('event: stream_reset\\n'
+            yield ('event: stream_reset\n'
                    'data: ' + json.dumps({'reason': reset_reason, 'floor': floor,
-                                           'cursor': newest}) + '\\n\\n')
+                                           'cursor': newest}) + '\n\n')
             last_heartbeat = time.monotonic()
             continue
         if rows:
