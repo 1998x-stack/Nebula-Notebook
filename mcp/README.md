@@ -342,16 +342,16 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | `notebook_create` | `title:str`, `cells:list[dict] | null`, `folder_id:str | null` | `cells` = `null`<br>`folder_id` = `null` |
 | `notebook_create_file` | `path:str`, `title:str | null`, `cells:list[dict] | null`, `overwrite:bool`, `folder:str | null` | `title` = `null`<br>`cells` = `null`<br>`overwrite` = `False`<br>`folder` = `null` |
 | `notebook_delete` | `notebook_id:str` |  |
-| `notebook_fork` | `notebook_id:str`, `version:int`, `title:str | null`, `folder_id:str | null` | `title` = `null`<br>`folder_id` = `null` |
 | `notebook_export` | `notebook_id:str`, `path:str`, `overwrite:bool` | `overwrite` = `True` |
+| `notebook_fork` | `notebook_id:str`, `version:int`, `title:str | null`, `folder_id:str | null` | `title` = `null`<br>`folder_id` = `null` |
 | `notebook_get` | `notebook_id:str`, `include_outputs:bool`, `include_data:bool` | `include_outputs` = `False`<br>`include_data` = `False` |
-| `notebook_version` | `notebook_id:str`, `version:int` |  |
-| `notebook_versions` | `notebook_id:str`, `limit:int`, `before:int | null` | `limit` = `50`<br>`before` = `null` |
 | `notebook_import` | `path:str`, `title:str | null` | `title` = `null` |
 | `notebook_list` | `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_move` | `notebook_id:str`, `folder_id:str | null` | `folder_id` = `null` |
 | `notebook_rename` | `notebook_id:str`, `title:str` |  |
 | `notebook_run_cells` | `notebook_id:str`, `start:int`, `count:int`, `timeout:float`, `persist:bool`, `stop_on_error:bool`, `include_data:bool` | `start` = `0`<br>`count` = `5`<br>`timeout` = `120`<br>`persist` = `True`<br>`stop_on_error` = `True`<br>`include_data` = `False` |
+| `notebook_versions` | `notebook_id:str`, `limit:int`, `before:int | null` | `limit` = `50`<br>`before` = `null` |
+| `notebook_version` | `notebook_id:str`, `version:int` |  |
 
 ### Cell 与执行
 
