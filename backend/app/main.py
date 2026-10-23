@@ -20,12 +20,13 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from .config import settings
-from .db import (Base, User, LoginSession, Notebook, NotebookPermission, Runtime, Audit, Folder,
+from .db import (Base, User, LoginSession, Notebook, NotebookRevision, NotebookPermission, Runtime, Audit, Folder,
                  engine, SessionLocal, get_db, log_event, utcnow)
 from .security import (hash_password, verify_password, rate_check, new_session, digest,
                        current_user, current_identity, csrf_user, csrf_identity,
                        admin_only, admin_write, require_notebook, websocket_identity)
 from .validation import default_document, checked_document
+from .history import snapshot, backfill_current_revisions
 from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtime
 from .execution import (schedule_run, recover_runs, shutdown_runs, submit_run,
                         request_cancel, public_run, ACTIVE)
@@ -46,8 +47,13 @@ async def lifespan(app: FastAPI):
             if 'document_bytes' not in cols:
                 await conn.exec_driver_sql(
                     'ALTER TABLE notebooks ADD COLUMN document_bytes INTEGER NOT NULL DEFAULT 0')
+            if 'forked_from_notebook_id' not in cols:
+                await conn.exec_driver_sql('ALTER TABLE notebooks ADD COLUMN forked_from_notebook_id VARCHAR(36)')
+            if 'forked_from_version' not in cols:
+                await conn.exec_driver_sql('ALTER TABLE notebooks ADD COLUMN forked_from_version INTEGER')
     await recover_runs()
     async with SessionLocal() as db:
+        await backfill_current_revisions(db)
         # One-time backfill for notebooks created before document_bytes existed.
         stale = (await db.scalars(select(Notebook).where(Notebook.document_bytes == 0))).all()
         for nb in stale:
@@ -92,6 +98,12 @@ class CreateUser(BaseModel):
 
 class NewNotebook(BaseModel):
     title: str = Field(min_length=1, max_length=200)
+    folder_id: str | None = None
+
+
+class ForkNotebook(BaseModel):
+    version: int = Field(ge=1)
+    title: str | None = Field(default=None, min_length=1, max_length=200)
     folder_id: str | None = None
 
 
@@ -177,7 +189,10 @@ async def folder_rows(db, actor):
 
 async def document_payload(db, nb, role):
     result = {'id': nb.id, 'title': nb.title, 'owner_id': nb.owner_id,
-              'folder_id': nb.folder_id, 'size_bytes': int(nb.document_bytes or 0),
+              'folder_id': nb.folder_id if role == 'owner' else None,
+              'forked_from_notebook_id': nb.forked_from_notebook_id,
+              'forked_from_version': nb.forked_from_version,
+              'size_bytes': int(nb.document_bytes or 0),
               'version': nb.version, 'updated_at': nb.updated_at.isoformat() if nb.updated_at else None,
               'role': role, 'document': nb.document}
     rt = await db.get(Runtime, nb.id)
@@ -283,7 +298,9 @@ async def list_notebooks(folder_id: str | None = None, db: AsyncSession = Depend
                 NotebookPermission.notebook_id == nb.id, NotebookPermission.user_id == actor.id))
             role = p.role
         rows.append({'id': nb.id, 'title': nb.title, 'role': role,
-                     'folder_id': nb.folder_id,
+                     'owner_id': nb.owner_id,
+                     'is_shared': role != 'owner',
+                     'folder_id': nb.folder_id if role == 'owner' else None,
                      'size_bytes': int(nb.document_bytes or 0),
                      'cells': len((nb.document or {}).get('cells', [])),
                      'updated_at': nb.updated_at.isoformat() if nb.updated_at else None})
@@ -298,6 +315,7 @@ async def create_notebook(body: NewNotebook, db: AsyncSession = Depends(get_db),
     nb = Notebook(id=str(uuid4()), owner_id=actor.id, title=body.title, folder_id=body.folder_id,
                   document=doc, document_bytes=document_size(doc), version=1)
     db.add(nb)
+    snapshot(db, nb, version=1, title=nb.title, document=doc, author_id=actor.id, reason='create')
     log_event(db, actor.id, 'notebook.create', nb.id, body.folder_id or '')
     await db.commit()
     return await document_payload(db, nb, 'owner')
@@ -319,6 +337,7 @@ async def import_notebook(file: UploadFile = File(...), folder_id: str | None = 
     nb = Notebook(id=str(uuid4()), owner_id=actor.id, title=name, folder_id=folder_id,
                   document=document, document_bytes=document_size(document), version=1)
     db.add(nb)
+    snapshot(db, nb, version=1, title=nb.title, document=document, author_id=actor.id, reason='import')
     log_event(db, actor.id, 'notebook.import', nb.id, folder_id or '')
     await db.commit()
     return await document_payload(db, nb, 'owner')
@@ -339,6 +358,67 @@ async def notebook_revision(notebook_id: str, db: AsyncSession = Depends(get_db)
             'updated_at': nb.updated_at.isoformat() if nb.updated_at else None}
 
 
+
+@app.get('/api/notebooks/{notebook_id}/versions')
+async def list_notebook_versions(notebook_id: str, limit: int = 50, before: int | None = None,
+                                 db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
+    """List immutable snapshots, newest first. Backfilled installs only retain current version."""
+    await require_notebook(db, notebook_id, actor)
+    if not 1 <= limit <= 100 or (before is not None and before <= 1):
+        raise HTTPException(422, 'limit must be 1..100; before must be >1')
+    query = select(NotebookRevision).where(NotebookRevision.notebook_id == notebook_id)
+    if before is not None:
+        query = query.where(NotebookRevision.version < before)
+    rows = (await db.scalars(query.order_by(NotebookRevision.version.desc()).limit(limit))).all()
+    return [{'version': r.version, 'title': r.title, 'author_id': r.author_id,
+             'reason': r.reason, 'created_at': r.created_at.isoformat() if r.created_at else None}
+            for r in rows]
+
+
+@app.get('/api/notebooks/{notebook_id}/versions/{version}')
+async def get_notebook_version(notebook_id: str, version: int, db: AsyncSession = Depends(get_db),
+                               actor=Depends(current_user)):
+    await require_notebook(db, notebook_id, actor)
+    rev = await db.scalar(select(NotebookRevision).where(
+        NotebookRevision.notebook_id == notebook_id, NotebookRevision.version == version))
+    if not rev:
+        raise HTTPException(404, 'Saved version not available')
+    return {'notebook_id': notebook_id, 'version': rev.version, 'title': rev.title,
+            'document': rev.document, 'author_id': rev.author_id,
+            'reason': rev.reason, 'created_at': rev.created_at.isoformat() if rev.created_at else None}
+
+
+@app.post('/api/notebooks/{notebook_id}/fork')
+async def fork_notebook(notebook_id: str, body: ForkNotebook, db: AsyncSession = Depends(get_db),
+                        actor=Depends(csrf_user)):
+    """Fork any *available* saved version into a new private notebook.
+
+    Forking does not clone runtime memory, workspace files, permissions or links
+    to source credentials. The new notebook starts its own independent history.
+    """
+    parent, _ = await require_notebook(db, notebook_id, actor)
+    rev = await db.scalar(select(NotebookRevision).where(
+        NotebookRevision.notebook_id == notebook_id, NotebookRevision.version == body.version))
+    if not rev:
+        raise HTTPException(404, 'Saved version not available')
+    if body.folder_id:
+        await require_folder(db, body.folder_id, actor)
+    document = checked_document(rev.document)
+    name = body.title or f'{rev.title} (fork v{rev.version})'
+    if len(name) > 200:
+        name = name[:200]
+    fork = Notebook(id=str(uuid4()), owner_id=actor.id, title=name,
+                    folder_id=body.folder_id, document=document,
+                    version=1, document_bytes=document_size(document),
+                    forked_from_notebook_id=parent.id, forked_from_version=rev.version)
+    db.add(fork)
+    snapshot(db, fork, version=1, title=name, document=document,
+             author_id=actor.id, reason='fork')
+    log_event(db, actor.id, 'notebook.fork', fork.id, f'{notebook_id}@{rev.version}')
+    await db.commit()
+    return await document_payload(db, fork, 'owner')
+
+
 @app.put('/api/notebooks/{notebook_id}')
 async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     nb, role = await require_notebook(db, notebook_id, actor, 'editor')
@@ -350,6 +430,8 @@ async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession =
     if result.rowcount != 1:
         await db.rollback()
         raise HTTPException(409, 'Notebook changed in another tab; reload before saving')
+    snapshot(db, nb, version=body.version + 1, title=body.title, document=doc,
+             author_id=actor.id, reason='save')
     log_event(db, actor.id, 'notebook.save', notebook_id, str(body.version + 1))
     await db.commit()
     return {'version': body.version + 1}
@@ -364,6 +446,8 @@ async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), 
         raise HTTPException(409, 'Cancel and finish managed execution runs before deleting notebook')
     await stop_runtime(db, notebook_id, actor.id)
     await db.execute(delete(NotebookPermission).where(NotebookPermission.notebook_id == notebook_id))
+    await db.execute(delete(NotebookRevision).where(NotebookRevision.notebook_id == notebook_id))
+    await db.execute(delete(ExecutionRun).where(ExecutionRun.notebook_id == notebook_id))
     await db.delete(nb)
     log_event(db, actor.id, 'notebook.delete', notebook_id)
     await db.commit()

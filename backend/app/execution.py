@@ -25,6 +25,7 @@ from .db import ExecutionRun, Notebook, Runtime, SessionLocal, User, utcnow, log
 from .runtime import start_runtime, interrupt_runtime
 from .security import require_notebook
 from .validation import checked_document
+from .history import snapshot
 
 log = logging.getLogger(__name__)
 FINAL = frozenset({'succeeded', 'failed', 'timed_out', 'cancelled', 'interrupted', 'stale'})
@@ -201,6 +202,8 @@ async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool
                 document=checked, version=nb.version+1, updated_at=utcnow(),
                 document_bytes=len(json.dumps(checked, ensure_ascii=False).encode('utf-8'))))
             if result.rowcount:
+                snapshot(db, nb, version=nb.version + 1, title=nb.title,
+                         document=checked, author_id=run.actor_id, reason='execute')
                 await db.commit()
                 return True
             await db.rollback()
