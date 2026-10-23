@@ -238,6 +238,24 @@ Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_R
 比较改动或从历史版本 Fork。未传 expected_version 时，MCP 会读取
 当前版本作为该次操作的基线，不会自行在冲突后自动改写。
 
+### P0-E: explicit conflict recovery and private draft Fork
+
+A shared Editor/Agent may use `notebook_merge_preview` to compare an unsaved
+draft with a retained immutable base version and the latest saved Notebook.
+Independent Cell changes merge automatically. Overlapping same-Cell edits,
+deletion conflicts, reorders and conflicting title/metadata edits require
+explicit resolutions such as `{"cell:example":"mine","order":"theirs"}`.
+The `notebook_merge_commit` tool requires `base_version`,
+`expected_latest_version` from preview, `mine_title`, `mine_document`,
+a unique `operation_id` and any conflict choices. On transport uncertainty
+reuse the **exact** operation ID and arguments. On HTTP 409 from a competing
+commit, preview against the newer version; never silently overwrite.
+`notebook_fork_draft` instead creates an independently owned Notebook from
+the unpublished draft without changing the shared source, using a stable
+`operation_id` for retry safety.
+
+[Full protocol and examples](../docs/COLLABORATION_MERGE.md).
+
 ### Agent execution visible in the browser (P0-B)
 
 When a notebook is open, MCP `cell_add`, `cell_update`, `cell_move`,
