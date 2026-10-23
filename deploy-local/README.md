@@ -13,8 +13,8 @@
 - 管理员密码：见仓库根目录 `.env` 的 `ADMIN_PASSWORD`（文件权限 600；首次启动时写入数据库，之后改 `.env` 不会自动改库里的密码）。
 - 已导入示例笔记本：**Nebula demo · 示例笔记本**（6 个 cell，CPU 可跑；GPU cell 会提示 CPU 镜像没有 PyTorch，这是预期行为）。
 - 示例笔记本已重置为干净状态（6 个 cell、无输出）；它的 **CPU runtime 当前处于 ready**（用户已连接过），刷新页面即可直接运行；如果已停止，点 **Connect** 重新启动。
-- **Notebook URL 路由**：新建或打开 notebook 后地址为 `/notebook/<uuid>`；刷新、浏览器前进/后退、直接访问都可用。链接仍需登录且有权限，不是公开分享链接。
-- **Pi agent 已接入**：用户级 `~/.pi/agent/mcp.json` 注册了 `nebula` MCP server；`pi mcp list` → `connected, 35 tools (codemode)`。其他客户端配置见 `mcp/README.md`。
+- **URL 路由**：新建或打开 notebook 后地址为 `/notebook/<uuid>`，进入文件夹后为 `/folder/<uuid>`；刷新、浏览器前进/后退、直接访问都可用。链接仍需登录且有权限，不是公开分享链接。
+- **Pi agent 已接入**：用户级 `~/.pi/agent/mcp.json` 注册了 `nebula` MCP server；`pi mcp list` → `connected, 46 tools (codemode)`。其他客户端配置见 `mcp/README.md`。
 
 ## 2. 部署方式（本机实际执行）
 
@@ -105,9 +105,9 @@ NEBULA_LAN_BASE=http://<你的局域网IP>:8000 node lan-e2e.cjs                
 
 ```bash
 ./mcp/install-pi.sh         # 注册到 ~/.pi/agent/mcp.json
-pi mcp list                 # 应显示 connected, 35 tools
+pi mcp list                 # 应显示 connected, 46 tools
 # Claude / Codex / OpenCode 配置见 mcp/README.md 和 mcp/clients/
-mcp/.venv/bin/python mcp/test_mcp.py   # 50/50 端到端验收
+mcp/.venv/bin/python mcp/test_mcp.py   # 86/86 端到端验收
 ```
 
 本地文件操作受 `NEBULA_MCP_FS_ROOT` 限制；`NEBULA_MCP_READONLY=1` 可禁用写/执行工具。完整工具目录、配置示例与安全说明见 **`mcp/README.md`**。
@@ -150,7 +150,7 @@ NEBULA_HOST=127.0.0.1 ./deploy-local/start.sh
 | MCP server 端到端 | **50 / 50 通过** | notebook/cell/run/workspace/export/interrupt/runtime start-stop、无 transient、错误提示 |
 | Notebook URL 路由 | **PASS** | 创建/打开 → `/notebook/<uuid>`；reload、back/forward、deep link、404 + Back、非法路径归一、删除回 `/` |
 | 非 ASCII 标题导出 | **PASS** | 中文标题 demo 点击 Export → 200、filename `Nebula_demo.ipynb`、nbformat 4（16 cells） |
-| Pi MCP 接入 | **PASS** | `pi mcp list`：connected，35 tools + resources |
+| Pi MCP 接入 | **PASS** | `pi mcp list`：connected，46 tools + resources |
 | demo 笔记本局域网复验 | **3 / 3 通过** | 运行输出、新建 cell、Run all 图片渲染 |
 | matplotlib PNG 渲染 | **PASS** | `%matplotlib inline` 后 `.output-image img` naturalWidth=556、naturalHeight=413，无 pageerror（`11-plot-render.png`） |
 | XSS 输出消毒 | **PASS** | `onerror` 被移除，`<script>`/`<iframe>` 被移除，正常 `<b>` 保留，无 pageerror |
@@ -265,8 +265,8 @@ git diff -- backend/app/main.py backend/app/runtime.py frontend/src/main.jsx
 ## 7. 测试工件与截图
 
 - `deploy-local/test_extended.py`：97 项 API/WS/Docker 验收脚本。
-- `mcp/`：35-tool MCP server、工具目录、客户端配置（Pi/Claude/Codex/OpenCode）和 50 项 E2E。
-- `logs/mcp-test.log`：MCP 50/50 验收日志。
+- `mcp/`：46-tool MCP server、工具目录（`mcp/README.md` 逐接口说明）、客户端配置（Pi/Claude/Codex/OpenCode）和 86 项 E2E。
+- `logs/mcp-test.log`：MCP 86/86 验收日志。
 - `deploy-local/e2e/e2e.cjs`：Playwright 浏览器 E2E。
 - `deploy-local/e2e/transient-test.cjs`、`export-test.cjs`、`url-routing.cjs`：图片保存、非 ASCII 标题导出、URL 路由回归。
 - `deploy-local/e2e/xss.cjs`：HTML 输出 XSS 消毒验证。

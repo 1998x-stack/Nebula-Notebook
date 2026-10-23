@@ -12,11 +12,13 @@
 | --- | --- |
 | Notebook 编辑 | Cell 添加、修改、删除、排序、Markdown 与 Python 编辑 |
 | Notebook URL | `/notebook/<id>` 深链接，刷新与前进/后退可用 |
+| 首页与文件夹 | 文件夹分组（`/folder/<id>` 深链接）、面包屑、可折叠固定侧栏；文件夹与 notebook 支持列表/网格视图，按时间/文件名/大小排序 |
+| 公式渲染 | Markdown cell 支持 `$...$` / `$$...$$`（KaTeX 本地字体，出错不炸 cell） |
 | 执行 | Jupyter Kernel 与 WebSocket 输出，标准输出、错误、图表 |
 | GPU | 在服务端 Docker CUDA 镜像中完成实际 PyTorch 检测后开放选择 |
 | 用户权限 | 管理员、Notebook 所有者、编辑者、只读者 |
 | 持久化 | SQLite、文档版本控制、ipynb 导入导出、工作目录 |
-| Agent 接入 | 35-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
+| Agent 接入 | 46-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
 | 运维 | Ubuntu 检测、部署脚本、冒烟测试与 CI |
 
 ## Ubuntu 22.04/24.04 快速部署
@@ -51,11 +53,11 @@ docker build -f docker/runtime.gpu.Dockerfile -t nebula-runtime:gpu .
 
 ## 用 LLM Agent 操作（MCP）
 
-`mcp/` 提供 stdio MCP server，把 Nebula 的 notebook / cell / kernel / workspace / 分享 / 管理能力封装为 **35 个工具 + 2 个 resources**。它复用现有 REST/WebSocket API 的 session、CSRF 和 RBAC，不新增信任边界。
+`mcp/` 提供 stdio MCP server，把 Nebula 的 notebook / 文件夹 / cell / kernel / workspace / 分享 / 管理能力封装为 **46 个工具 + 2 个 resources**。它复用现有 REST/WebSocket API 的 session、CSRF 和 RBAC，不新增信任边界。完整接口说明见 [MCP README](mcp/README.md)。
 
 ```bash
 ./mcp/install-pi.sh      # 注册到 ~/.pi/agent/mcp.json
-pi mcp list              # connected, 35 tools
+pi mcp list              # connected, 46 tools
 mcp/.venv/bin/python mcp/test_mcp.py   # 50/50 端到端验收
 ```
 

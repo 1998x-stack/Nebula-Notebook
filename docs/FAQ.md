@@ -14,7 +14,7 @@ Optionally. The Ubuntu backend must have compatible NVIDIA hardware, driver and 
 
 ## Can I use Nebula Notebook from an LLM agent?
 
-Yes. The `mcp/` directory contains a stdio MCP server with 35 tools for notebooks, cells, execution, runtimes, workspace files, sharing and administration. It works with Pi, Claude Desktop/Code, Codex CLI and OpenCode. The agent uses a normal Nebula account, so its permissions are exactly that account's. See [mcp/README.md](../mcp/README.md).
+Yes. The `mcp/` directory contains a stdio MCP server with 46 tools for notebooks, folders, cells, execution, runtimes, workspace files, sharing and administration. It works with Pi, Claude Desktop/Code, Codex CLI and OpenCode. The agent uses a normal Nebula account, so its permissions are exactly that account's. See [mcp/README.md](../mcp/README.md) for the per-interface reference.
 
 ## Can I use it without an NVIDIA GPU?
 

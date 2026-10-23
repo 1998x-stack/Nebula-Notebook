@@ -19,6 +19,7 @@
 | Export document | All | Own | Granted | Granted |
 | Workspace files upload/list/download/delete | All | Own | Granted | No |
 | Manage notebook sharing | All | Own | No | No |
+| Create/rename/delete own folders, move own notebooks into them | No | Own | Own | Own |
 | Delete notebook | All | Own | No | No |
 | Create/deactivate users, audit | Yes | No | No | No |
 
@@ -51,11 +52,11 @@ Administrator has broad access to all notebooks. This is a policy decision, and 
 
 ## MCP adapter
 
-`mcp/` exposes notebook CRUD, cell editing/insertion, execution, runtime control, workspace files, sharing and administration as 35 MCP tools plus two resources (`nebula://notebooks`, `nebula://notebooks/{id}`). Agents can create a real `.ipynb` at a local path and import it, or work directly on a notebook by id. Outputs returned by the kernel are normalized to the nbformat schema before being saved, so Jupyter-only fields such as `transient` never reach persistence. The adapter is tested with the MCP Python client and with Pi (`pi mcp list`); see `mcp/README.md`.
+`mcp/` exposes notebook CRUD, cell editing/insertion, execution, runtime control, workspace files, folders, sharing and administration as 46 MCP tools plus two resources (`nebula://notebooks`, `nebula://notebooks/{id}`). Agents can create a real `.ipynb` at a local path and import it, or work directly on a notebook by id. Outputs returned by the kernel are normalized to the nbformat schema before being saved, so Jupyter-only fields such as `transient` never reach persistence. The adapter is tested with the MCP Python client and with Pi (`pi mcp list`); see `mcp/README.md` for the per-interface reference.
 
-## Notebook URLs
+## Notebook and folder URLs
 
-`GET /notebook/<uuid>` returns the SPA shell (`frontend/dist/index.html`). The React app reads the id from the path, fetches `/api/notebooks/<uuid>`, and pushes/replaces History entries when opening, going back or deleting. Deep links, refresh and browser back/forward therefore work without server-side sessions being tied to a single page. Knowing the URL does not grant access: the API still enforces owner/editor/viewer permissions, and a missing or unauthorized notebook renders a not-found state with a Back action. The URL is not a public share link; sharing remains account-based.
+`GET /notebook/<uuid>` and `GET /folder/<uuid>` return the SPA shell (`frontend/dist/index.html`). The React app reads the id from the path, fetches the matching API resource and pushes/replaces History entries when opening a notebook, entering a folder, going home, going back or deleting. Deep links, refresh and browser back/forward therefore work without server-side sessions being tied to a single page. Knowing the URL does not grant access: the API still enforces owner/editor/viewer permissions, and a missing or unauthorized notebook renders a not-found state with a Back action. The URL is not a public share link; sharing remains account-based. Folders are personal: they are visible only to their owner, contain no permissions of their own, and never appear in another account's list.
 
 ## V2+/production roadmap
 
