@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, or_, select, update, exists
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 import websockets
 from websockets.exceptions import ConnectionClosed
@@ -164,6 +165,7 @@ class ForkDraft(BaseModel):
     mine_title: str = Field(min_length=1, max_length=200)
     mine_document: dict
     folder_id: str | None = None
+    operation_id: str = Field(min_length=8, max_length=128)
 
 
 class MergeCommit(MergePreview):
@@ -525,25 +527,54 @@ async def fork_unsaved_draft(notebook_id: str, body: ForkDraft,
     memory, workspace files, or source permissions.
     """
     source, _ = await require_notebook(db, notebook_id, actor, 'editor')
+    fingerprint = hashlib.sha256(json.dumps(
+        body.model_dump(exclude={'operation_id'}),sort_keys=True,ensure_ascii=False,
+        separators=(',', ':')).encode('utf-8')).hexdigest()
+    prior = await db.scalar(select(CellOperation).where(
+        CellOperation.notebook_id == notebook_id,
+        CellOperation.operation_id == body.operation_id))
+    if prior:
+        if prior.actor_id != actor.id or prior.request_hash != fingerprint:
+            raise HTTPException(409, 'Operation ID belongs to other inputs or actor')
+        child = await db.get(Notebook, prior.result.get('fork_id'))
+        if not child:
+            raise HTTPException(404, 'Previously created private Fork was deleted')
+        return await document_payload(db, child, 'owner')
     if body.base_version > source.version:
         raise HTTPException(422, 'Base cannot be newer than the shared source')
     if body.folder_id:
         await require_folder(db, body.folder_id, actor)
     document = checked_document(body.mine_document)
-    new_name = body.mine_title[:193] + ' (draft)' if len(body.mine_title) > 193 else body.mine_title + ' (draft)'
+    new_name = body.mine_title[:192] + ' (draft)' if len(body.mine_title) > 192 else body.mine_title + ' (draft)'
     fork = Notebook(id=str(uuid4()), owner_id=actor.id, title=new_name,
                     folder_id=body.folder_id, document=document, version=1,
                     document_bytes=document_size(document),
                     forked_from_notebook_id=source.id,
                     forked_from_version=body.base_version)
     db.add(fork)
+    db.add(CellOperation(id=str(uuid4()),notebook_id=notebook_id,actor_id=actor.id,
+                         operation_id=body.operation_id,request_hash=fingerprint,
+                         expected_version=body.base_version,committed_version=source.version,
+                         result={'fork_id':fork.id}))
     snapshot(db, fork, version=1, title=new_name, document=document,
              author_id=actor.id, reason='fork')
     append_event(db, fork.id, 'document.committed', actor_id=actor.id,
                  version=1, payload={'full_sync': True})
     log_event(db, actor.id, 'notebook.fork_draft', fork.id,
               f'{notebook_id}@{body.base_version}')
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        prior = await db.scalar(select(CellOperation).where(
+            CellOperation.notebook_id == notebook_id,
+            CellOperation.operation_id == body.operation_id))
+        if not prior or prior.actor_id != actor.id or prior.request_hash != fingerprint:
+            raise HTTPException(409, 'Draft Fork operation ID already used')
+        child = await db.get(Notebook, prior.result.get('fork_id'))
+        if not child:
+            raise HTTPException(404, 'Previously created private Fork was deleted')
+        return await document_payload(db, child, 'owner')
     return await document_payload(db, fork, 'owner')
 
 
