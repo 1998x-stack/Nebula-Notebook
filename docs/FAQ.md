@@ -36,6 +36,10 @@ Notebook documents and access metadata are stored in the server's SQLite databas
 
 Yes, within provisioned accounts: admins manage users; owners manage notebook sharing; editors can modify and execute code; viewers can read saved document content. Grant editors only to trusted users since code execution can modify the notebook workspace.
 
+## How does notebook sharing work?
+
+Sharing targets an **existing active Nebula account by email**; create the account in Administration first. No invitation email is sent. Owners/admins choose viewer or editor, and the recipient logs in with that email to see the notebook. Viewers can read saved content; editors can edit and execute code in the notebook's workspace. Revoking the share removes access immediately; use an unguessable password and grant editor only to trusted collaborators.
+
 ## Is it safe to let anonymous visitors execute Python?
 
 **No.** The v0.1 release is for trusted environments. A container is not equivalent to a hardened VM/microVM isolation boundary. Do not expose arbitrary execution to anonymous or untrusted users. [Threat model](../SECURITY.md).
