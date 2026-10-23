@@ -315,7 +315,7 @@ function NotebookEditor({id,user,back,logout}) {
  const socket=useRef(null),versions=useRef(1),revisions=useRef(0),savingRef=useRef(false),pending=useRef(new Map()),latestDoc=useRef(null),latestTitle=useRef('');
  const dirtyRef=useRef(false),lastExternalVersion=useRef(0);
  const baselineRef=useRef(null),baselineTitleRef=useRef('');
- const mergeBlockedRef=useRef(false),mergeOperationRef=useRef(null),mergePreviewRevisionRef=useRef(null);
+ const mergeBlockedRef=useRef(false),mergeOperationRef=useRef(null),mergePreviewRevisionRef=useRef(null),draftForkOpRef=useRef(null);
  const [mergeOpen,setMergeOpen]=useState(false),[mergeBusy,setMergeBusy]=useState(false),
        [mergePreview,setMergePreview]=useState(null),[mergeTheirs,setMergeTheirs]=useState(null),
        [mergeChoices,setMergeChoices]=useState({}),[mergeError,setMergeError]=useState('');
@@ -557,10 +557,13 @@ function NotebookEditor({id,user,back,logout}) {
    const baseline=baselineRef.current;
    if(!baseline||!latestDoc.current)return;
    setMergeBusy(true);setMergeError('');
+   const previous=draftForkOpRef.current;
+   const op=previous?.revision===revisions.current?previous:{id:randomId(),revision:revisions.current};
+   draftForkOpRef.current=op;
    try{
      const created=await api(`/notebooks/${id}/merge/fork-draft`,{method:'POST',
        body:JSON.stringify({base_version:baseline.version,mine_title:latestTitle.current,
-                             mine_document:latestDoc.current})});
+                             mine_document:latestDoc.current,operation_id:op.id})});
      location.href='/notebook/'+encodeURIComponent(created.id);
    }catch(e){setMergeError(e.message)}finally{setMergeBusy(false)}
  }
