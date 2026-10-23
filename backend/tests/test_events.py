@@ -51,6 +51,16 @@ async def test_document_events_are_durable_and_delta_ordered(clients):
         assert len(new_events) == 2
 
 
+async def test_stream_preview_drops_huge_payloads():
+    from app.execution import live_event_preview
+    display = {'output_type':'display_data','data':{'image/png':'x'*100_000},'metadata':{}}
+    stream = {'output_type':'stream','name':'stdout','text':'x'*100_000}
+    for original in (display,stream):
+        preview = live_event_preview(original)
+        assert len(json.dumps(preview)) < 10_000
+    assert 'available after run' in live_event_preview(display)['data']['text/plain']
+
+
 async def test_event_delta_bounded_and_deletions():
     a = {'cells':[{'id':'1','source':'a'},{'id':'2','source':'b'}]}
     b = {'cells':[{'id':'2','source':'b'}]}

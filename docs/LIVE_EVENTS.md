@@ -46,8 +46,9 @@ writes are still optimistic CAS, **not CRDT**.
 
 `run.queued`, `run.started`, `run.output`, `run.cancelling`,
 `run.finished` events contain `run_id` and `cell_id`. `run.output`
-holds up to 12 KiB per batch or approximately 200ms worth of normalized,
-bounded outputs (stdout/stderr/HTML/plain/svg/png metadata). The full run
+targets 12 KiB per batch or approximately 200ms worth of normalized
+outputs; oversized single text/error/rich outputs receive a short live preview.
+The complete output is available in the Notebook after a successful save (stdout/stderr/HTML/plain/svg/png metadata). The full run
 output is still capped independently by the durable execution layer;
 large assets should eventually use an Artifact reference rather than JSON.
 

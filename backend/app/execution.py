@@ -105,6 +105,25 @@ async def _jupyter_handshake(ws) -> None:
     raise RuntimeError('Jupyter shell channel did not become ready')
 
 
+def live_event_preview(entry: dict) -> dict:
+    """Keep SSE events small, even when one Kernel chunk/image is enormous."""
+    raw = len(json.dumps(entry, ensure_ascii=False).encode('utf-8'))
+    if raw <= 10_000:
+        return entry
+    kind = entry.get('output_type')
+    if kind == 'stream':
+        return {'output_type': 'stream', 'name': entry.get('name', 'stdout'),
+                'text': str(entry.get('text', ''))[:4000] +
+                        '\\n[Live preview truncated; full output follows on save]'}
+    if kind == 'error':
+        return {'output_type': 'error', 'ename': str(entry.get('ename','Error'))[:100],
+                'evalue': str(entry.get('evalue',''))[:500],
+                'traceback': ['[Traceback preview limited; inspect saved result]']}
+    return {'output_type': 'display_data',
+            'data': {'text/plain': '[Large rich output available after run finishes]'},
+            'metadata': {}}
+
+
 async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) -> tuple[str, list, int | None, str | None]:
     """Kernel request, bounded output collection, and explicit busy/idle status."""
     url = ('ws://127.0.0.1:' + str(rt.port) + '/api/kernels/' + str(rt.kernel_id) +
@@ -282,7 +301,8 @@ async def worker(run_id: str):
                     return
             try:
                 async def stream_batch(batch):
-                    await emit_run(run_id, 'run.output', {'outputs': batch})
+                    await emit_run(run_id, 'run.output', {
+                        'outputs': [live_event_preview(entry) for entry in batch]})
                 status, outputs, count, error = await execute_jupyter(
                     rt, code, timeout, on_output=stream_batch)
             except asyncio.TimeoutError:

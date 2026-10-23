@@ -312,7 +312,7 @@ function NotebookEditor({id,user,back,logout}) {
  const [dirty,setDirty]=useState(false),[revision,setRevision]=useState(0),[saveTick,setSaveTick]=useState(0),[runningIds,setRunningIds]=useState({});
  const socket=useRef(null),versions=useRef(1),revisions=useRef(0),savingRef=useRef(false),pending=useRef(new Map()),latestDoc=useRef(null),latestTitle=useRef('');
  const dirtyRef=useRef(false),lastExternalVersion=useRef(0);
- const eventCursorRef=useRef(0),eventStreamRef=useRef(null),liveRef=useRef(false);
+ const eventCursorRef=useRef(0),syncedCursorRef=useRef(0),eventStreamRef=useRef(null),liveRef=useRef(false);
  const [liveConnected,setLiveConnected]=useState(false);
  const canEdit = !!entry && entry.role!=='viewer';
  const [folderCrumb,setFolderCrumb]=useState(null);
@@ -322,7 +322,7 @@ function NotebookEditor({id,user,back,logout}) {
  function editDoc(fn){setDoc(prev=>{const next=typeof fn==='function'?fn(prev):fn;latestDoc.current=next;return next});revisions.current++;dirtyRef.current=true;setRevision(revisions.current);setDirty(true)}
  function updateCell(index,patch){editDoc(d=>({...d,cells:d.cells.map((c,i)=>i===index?{...c,...patch}:c)}))}
  const fetchRuntime=useCallback(async()=>{try{setRuntime(await api(`/notebooks/${id}/runtime`))}catch{}},[id]);
- useEffect(()=>{let active=true; (async()=>{try{const n=await api(`/notebooks/${id}`);if(!active)return;setEntry(n);setDoc(normalize(n.document));latestDoc.current=normalize(n.document);setTitle(n.title);latestTitle.current=n.title;versions.current=n.version;eventCursorRef.current=n.event_cursor||0;setRuntime(n.runtime||{mode:null,status:'stopped'});if(n.runtime?.status==='ready')connectChannels();setCaps(await api('/runtime/capabilities'));
+ useEffect(()=>{let active=true; (async()=>{try{const n=await api(`/notebooks/${id}`);if(!active)return;setEntry(n);setDoc(normalize(n.document));latestDoc.current=normalize(n.document);setTitle(n.title);latestTitle.current=n.title;versions.current=n.version;eventCursorRef.current=n.event_cursor||0;syncedCursorRef.current=n.event_cursor||0;setRuntime(n.runtime||{mode:null,status:'stopped'});if(n.runtime?.status==='ready')connectChannels();setCaps(await api('/runtime/capabilities'));
    if(n.folder_id){try{const folders=await api('/folders');const f=folders.find(x=>x.id===n.folder_id);if(active&&f)setFolderCrumb({id:f.id,name:f.name})}catch{}}
  }catch(e){if(active)setError(e.message)}})();return()=>{active=false;socket.current?.close()}},[id]);
  const save=useCallback(async()=>{if(!canEdit||savingRef.current||!dirty||!latestDoc.current)return;const at=revisions.current;const snapshot=latestDoc.current;const name=latestTitle.current; savingRef.current=true;setSaving('saving');try{const result=await api(`/notebooks/${id}`,{method:'PUT',body:JSON.stringify({document:snapshot,title:name,version:versions.current})});versions.current=result.version;if(revisions.current===at){dirtyRef.current=false;setDirty(false);setSaving('saved')}else{setSaving('unsaved')}}catch(e){setError(e.message);setSaving('error')}finally{savingRef.current=false;if(revisions.current!==at)setSaveTick(x=>x+1)}},[canEdit,dirty,id]);
@@ -378,6 +378,7 @@ function NotebookEditor({id,user,back,logout}) {
      const next=normalize(n.document);
      versions.current=n.version;
      eventCursorRef.current=Math.max(eventCursorRef.current,n.event_cursor||0);
+     syncedCursorRef.current=Math.max(syncedCursorRef.current,n.event_cursor||0);
      latestDoc.current=next;setDoc(next);latestTitle.current=n.title;setTitle(n.title);
      setEntry(n);setSaving('saved');
    }
@@ -402,14 +403,17 @@ function NotebookEditor({id,user,back,logout}) {
    }
    async function handleEvent(event){
      eventCursorRef.current=Math.max(eventCursorRef.current,event.event_id||0);
+     // An authoritative reload already includes these saved outputs/changes.
+     if((event.event_id||0)<=syncedCursorRef.current)return;
      if(event.kind==='document.committed')return applyPatch(event);
      const cellId=event.cell_id;
      if(!cellId)return;
-     if(event.kind==='run.queued'||event.kind==='run.started'||event.kind==='run.cancelling'){
+     if(event.kind==='run.queued'||event.kind==='run.started'||event.kind==='run.cancelling'||event.kind==='run.output'){
        setRunningIds(previous=>({...previous,[cellId]:true}));
      }else if(event.kind==='run.finished'){
        setRunningIds(previous=>{const copy={...previous};delete copy[cellId];return copy;});
-     }else if(event.kind==='run.output'&&!dirtyRef.current&&!savingRef.current){
+     }
+     if(event.kind==='run.output'&&!dirtyRef.current&&!savingRef.current){
        const outputs=event.payload?.outputs;
        if(!Array.isArray(outputs)||outputs.length>100)return;
        const updated=mergeRemoteOutput(latestDoc.current,cellId,outputs);
