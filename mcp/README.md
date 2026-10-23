@@ -238,6 +238,33 @@ Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_R
 比较改动或从历史版本 Fork。未传 expected_version 时，MCP 会读取
 当前版本作为该次操作的基线，不会自行在冲突后自动改写。
 
+### P1-A: bounded reproducible research ledger (nine tools)
+
+`research_create` freezes the *source hash* of an existing evaluator Cell,
+metric direction, asserted dataset + environment digests, mode, timeout and
+up to 20 Trial registrations. `research_list`/`research_get` provide
+leaderboard, best checkpoint, remaining budget and actual stored Run statuses.
+
+Use `run_submit` on the candidate Cell with a stable key, then
+`research_trial_register` with the same Run ID, its saved Notebook version
+and a unique stable trial key. Wait for candidate `succeeded`. Execute
+the *unchanged evaluator* via a separate `run_submit`, wait for success,
+and call `research_trial_finalize` with its actual Run ID. The server
+extracts exactly one tagged `NEBULA_METRIC` JSON stdout value, rather than
+trusting an Agent-claimed score; it preserves candidate version Checkpoints
+when a validated metric improves.
+
+`research_artifacts`, `research_artifact_upload` and
+`research_artifact_download` manage up to 8 MB per immutable SHA-256 blob,
+scoped by registered Notebook ACL. `research_close` prevents new Trial
+registrations (but does not cancel active Runs).
+
+**Limitations:** no automatic trial execution scheduler, isolated evaluation,
+attested dataset contents, or indefinite autoresearch loop. A Kernel error,
+interrupted job or nonfinite metric must not be silently retried with a new
+run key. See [the protocol](../docs/RESEARCH_ENGINE.md) and
+[Agent prompt](../examples/autoresearch-prompt.txt).
+
 ### P0-E: explicit conflict recovery and private draft Fork
 
 A shared Editor/Agent may use `notebook_merge_preview` to compare an unsaved
