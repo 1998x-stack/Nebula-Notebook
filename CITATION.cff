@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: 'If you use Nebula Notebook in research or education, please cite this project URL.'
+title: 'Nebula Notebook: Self-Hosted Jupyter Notebook with CPU/GPU Runtimes'
+type: software
+repository-code: 'https://github.com/1998x-stack/Nebula-Notebook'
+url: 'https://github.com/1998x-stack/Nebula-Notebook'
+license: MIT
+version: 0.1.0
+date-released: 2026-10-23

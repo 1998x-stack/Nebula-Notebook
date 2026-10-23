@@ -1,126 +1,155 @@
 # Nebula Notebook — Self-Hosted Jupyter Notebook with CPU/GPU Runtimes
 
 [![CI](https://github.com/1998x-stack/Nebula-Notebook/actions/workflows/ci.yml/badge.svg)](https://github.com/1998x-stack/Nebula-Notebook/actions/workflows/ci.yml)
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Release Status](https://img.shields.io/badge/status-beta-orange)](SECURITY.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB)](backend/requirements.txt)
+[![Status: Beta](https://img.shields.io/badge/status-beta-orange)](SECURITY.md)
 
-**Nebula Notebook is an open-source, self-hosted Python/Jupyter Notebook platform inspired by Google Colab.** It combines a React notebook editor, FastAPI API, a real IPython kernel, Docker-isolated CPU execution, and optional NVIDIA GPU support validated by an in-container PyTorch CUDA check. It supports `.ipynb` import/export and owner/editor/viewer permissions.
+**Nebula Notebook is an open-source, self-hosted alternative to cloud-hosted Python notebooks inspired by Google Colab and Jupyter.** Run `.ipynb` notebooks in your browser with a React editor, a real IPython kernel, Docker-managed CPU runtimes, and optional NVIDIA GPU execution verified inside the container. Notebook sharing uses owner, editor, and viewer roles.
 
-**[中文说明](README.zh-CN.md) · [Install](#quick-start) · [Deployment](docs/DEPLOYMENT.md) · [Architecture](docs/ARCHITECTURE.md) · [FAQ](docs/FAQ.md) · [Security](SECURITY.md) · [Contribute](CONTRIBUTING.md)**
+**[中文文档](README.zh-CN.md)** · **[Quick start](#quick-start)** · **[Architecture](docs/ARCHITECTURE.md)** · **[Deployment](docs/DEPLOYMENT.md)** · **[FAQ](docs/FAQ.md)** · **[Security](SECURITY.md)** · **[Contributing](CONTRIBUTING.md)**
 
-> **Beta / trusted-user deployment only.** This project's code execution is **not hardened for arbitrary untrusted internet users**. Docker grants significant host privileges to its operator; GPU passthrough introduces additional risk. See the [security policy](SECURITY.md) before deploying. Real CPU/GPU end-to-end validation on target Ubuntu hardware is still required.
+> **Beta / trust model:** Intended for personal machines, labs, and **trusted collaborators**. This is **not yet safe as a public, arbitrary-code-execution service for untrusted internet users**. Docker access is security-sensitive; see [Security & threat model](SECURITY.md). Frontend UI, API, and unit tests are included, but complete real-world deployment and GPU tests still need to be run on your own hardware. [Validation details](VALIDATION_REPORT.md).
 
-## Why Nebula Notebook?
+## What is Nebula Notebook?
 
-Nebula Notebook is a **Google Colab-style self-hosted alternative** for developers, labs and trusted teams that prefer to use their own Ubuntu machines rather than managed remote GPU services. The browser edits notebook cells; the backend authorizes requests; a Jupyter Server and `ipykernel` running in a dedicated Docker container execute Python. Notebook documents are stored separately from live Kernel state.
+Nebula Notebook is a web-based Python notebook server that lets you create, run, import, export, and share Jupyter-compatible `.ipynb` documents without sending your code to a third-party hosted notebook service. Your own **Ubuntu host** supplies CPU/GPU resources. The browser edits notebooks; a FastAPI server authorizes actions; a Jupyter Server + `ipykernel` in a per-notebook Docker container executes Python. GPU is offered **only when a real PyTorch CUDA check succeeds inside the configured GPU image**.
 
-## Features and status
+### Features
 
-| Feature | Implementation | Status |
+| Feature | Implementation | Current status |
 | --- | --- | --- |
-| Python notebook UI | React, CodeMirror, Markdown, cells, output | Implemented |
-| Execution | Jupyter Kernel over WebSocket proxy | Implemented; host smoke test required |
-| CPU runtimes | Docker per notebook with resource limits | Implemented; host smoke test required |
-| NVIDIA GPU | Optional image + real PyTorch CUDA probe | Implemented; compatible GPU host required |
-| Users and sharing | Administrator, owner, editor, viewer | Implemented |
-| Persistence | SQLite documents, versioned saves, .ipynb import/export | Implemented |
-| Workspace | Guarded upload, download and delete | Implemented |
-| Collaboration / multi-node / AI | Not in v0.1 | Roadmap |
+| Notebook editor | React, CodeMirror, Markdown and cell reordering | Implemented |
+| Python execution | Jupyter kernel messages over an authorized WebSocket proxy | Implemented; host smoke test required |
+| CPU sessions | Per-notebook Docker runtime with resource limits | Implemented; host smoke test required |
+| NVIDIA GPU | Optional CUDA image and PyTorch-in-container availability probe | Implemented; requires supported host |
+| Access control | Admin, notebook owner, editor, viewer | Implemented |
+| Save and share | SQLite documents, versioned writes, `.ipynb` import/export | Implemented |
+| Workspace files | Upload/download/delete with guarded flat filenames | Implemented |
+| Single-host operations | Ubuntu doctor, launch, smoke scripts and CI | Implemented |
+| Multi-node scheduling / live co-editing / SSO | Not in v0.1 | Roadmap |
 
-## Architecture
+### System architecture
 
 ```mermaid
 flowchart LR
-  UI["React Notebook UI"] <-->|"HTTP & WebSocket"| API["FastAPI auth & RBAC"]
-  API --> DB[("SQLite documents")]
-  API --> Docker["Docker runtime manager"]
-  Docker --> CPU["Jupyter Server + ipykernel CPU"]
-  Docker --> GPU["Optional CUDA GPU Kernel"]
-  CPU --> WS[("Notebook workspace")]
-  GPU --> WS
+  Browser[Browser: React notebook editor] <-->|HTTPS + WebSocket| API[FastAPI: auth, RBAC, notebook APIs]
+  API <--> DB[(SQLite document store)]
+  API --> Manager[Docker runtime manager]
+  Manager --> CPU[CPU: Jupyter + ipykernel]
+  Manager --> GPU[Optional GPU: PyTorch CUDA + Jupyter]
+  CPU <--> Workspace[(Persistent workspace)]
+  GPU <--> Workspace
 ```
 
-The **Notebook document** is persistent; **Python memory/variables** normally disappear when the runtime stops. Permissions are enforced by the API and Kernel proxy, not by hiding UI buttons.
+The **notebook document** is persisted separately from the **live Python kernel state**. Stopping a runtime removes in-memory variables but does not delete saved documents or the persistent workspace. [Architecture details →](docs/ARCHITECTURE.md)
 
 ## Quick start
 
-Recommended: Ubuntu 22.04/24.04, Python 3.11+, Node.js 22 and npm, Docker Engine. Run as a trusted non-root user with Docker access.
+Tested prerequisites are **not verified on every machine**. Recommended: Ubuntu 22.04/24.04, Python 3.11+, Node.js 22, npm, Docker Engine with permission to manage local containers. GPU is optional and requires an NVIDIA driver and NVIDIA Container Toolkit. **Run as a non-root account.**
 
 ```bash
+# 1. Clone
 git clone https://github.com/1998x-stack/Nebula-Notebook.git
 cd Nebula-Notebook
+
+# 2. Check host and configure secrets
 ./scripts/doctor.sh
 cp .env.example .env
-nano .env  # Set ADMIN_EMAIL and a strong unique ADMIN_PASSWORD
+nano .env  # Set ADMIN_EMAIL, a unique ADMIN_PASSWORD (12+ chars)
 
+# 3. Build Python CPU kernel image
 docker build -f docker/runtime.cpu.Dockerfile -t nebula-runtime:cpu .
+
+# 4. Build browser UI
 cd frontend && npm install && npm run build && cd ..
+
+# 5. Launch API and bundled frontend (one worker)
 ./scripts/launch.sh
 ```
 
-Open **http://127.0.0.1:8000** and sign in. To use the instance from another machine, prefer a private SSH tunnel:
+Open **http://127.0.0.1:8000** and sign in with your configured administrator credentials. Create a notebook, choose **CPU**, connect, and run `print('Hello, Nebula!')`. To access from another computer, start with an SSH tunnel; do **not** directly publish port 8000 to the internet.
 
 ```bash
-ssh -L 8000:127.0.0.1:8000 user@ubuntu-server
+# Run on your own computer, replacing user@server with an SSH destination
+ssh -L 8000:127.0.0.1:8000 user@server
 ```
-
-Do not publish the API on `0.0.0.0` for untrusted users. [Full deployment instructions](docs/DEPLOYMENT.md).
 
 ### Optional NVIDIA GPU
 
-On the **Ubuntu backend host**, install compatible NVIDIA drivers and NVIDIA Container Toolkit before building the GPU image:
-
 ```bash
+# Only on hosts with compatible NVIDIA drivers and NVIDIA Container Toolkit
 docker build -f docker/runtime.gpu.Dockerfile -t nebula-runtime:gpu .
 ./scripts/check_gpu.sh
 ```
 
-The frontend offers GPU **only when PyTorch can use CUDA inside the configured Docker image**. If verification fails, CPU remains the baseline. The browser computer's GPU does not count.
+The GPU option is enabled only if the server can start the GPU Docker image and execute `torch.cuda.is_available() == True`. GPU hardware in the **browser/client** does not count. If GPU verification fails, the CPU path remains available. [GPU troubleshooting →](docs/DEPLOYMENT.md#gpu-setup-and-verification)
 
-## Verify your setup
+## Validate your installation
 
 ```bash
+# Backend/API tests
 cd backend
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 PYTHONPATH=. .venv/bin/pytest -q
-cd ../frontend && npm install && npm run build && cd ..
-NEBULA_SMOKE_EMAIL=admin@example.com NEBULA_SMOKE_PASSWORD='your-password' \
-  backend/.venv/bin/python scripts/smoke.py
+cd ..
+
+# Frontend build
+cd frontend && npm install && npm run build && cd ..
+
+# Smoke test (run with backend started and CPU image built)
+NEBULA_SMOKE_EMAIL=admin@example.com NEBULA_SMOKE_PASSWORD='your-real-password'   backend/.venv/bin/python scripts/smoke.py
 ```
 
-The smoke test requires a running backend and built CPU image. CI **does not prove GPU correctness**. See [validation details](VALIDATION_REPORT.md).
+For a fresh install, use [Deployment guide](docs/DEPLOYMENT.md), [FAQ](docs/FAQ.md), and [Validation report](VALIDATION_REPORT.md). Do not treat the CI badge alone as proof of GPU functionality.
 
-## Nebula vs Colab vs JupyterLab
+## Comparison with Google Colab and JupyterLab
 
 | | Nebula Notebook v0.1 | Google Colab | JupyterLab |
 | --- | --- | --- | --- |
-| Hosting | Your own server | Cloud-managed | Configurable/self-hosted |
-| Compute | Docker CPU; optional local NVIDIA GPU | Cloud CPU/GPU/TPU, eligibility dependent | Kernel/server dependent |
-| Files | Jupyter .ipynb | Jupyter .ipynb | Jupyter .ipynb |
-| Notebook permissions | Admin/owner/editor/viewer | Provider-managed sharing | Deployment dependent |
-| Production untrusted multi-tenancy | **Not supported** | Managed provider | Depends on architecture |
+| Hosting | Self-hosted | Managed cloud | Primarily self-hosted / deployable |
+| Compute | Your Docker host, CPU + optional NVIDIA GPU | Google-managed runtimes, eligibility-dependent accelerators | Configurable server/kernel infrastructure |
+| File format | Jupyter `.ipynb` | Jupyter `.ipynb` | Jupyter `.ipynb` |
+| Team permissions | Admin + owner/editor/viewer | Platform-specific sharing | Depends on deployment and add-ons |
+| AI assistant | Not in v0.1 | Product-integrated AI features | Extensions available |
+| General-purpose multi-tenant safety | Not production-hardened | Managed by provider | Depends on deployment |
 
-Nebula Notebook is **not affiliated with or endorsed by Google or Project Jupyter**. Details: [comparison](docs/COMPARISON.md).
+Nebula Notebook is an **independent project**, not affiliated with or endorsed by Google or Project Jupyter. “Colab” and “Jupyter” are trademarks of their respective owners. [Read a more detailed comparison →](docs/COMPARISON.md).
 
-## FAQ
+## Repository layout
 
-**Can I use it without a GPU?** Yes, build the CPU runtime image and run notebooks on your Ubuntu host.
+```text
+backend/app/           FastAPI auth, RBAC, persistence, Docker runtime & kernel proxy
+backend/tests/         API, authorization and file tests
+frontend/              React + CodeMirror notebook interface
+docker/                CPU and optional NVIDIA CUDA kernel images
+scripts/               Host diagnostics, local launch, GPU check, smoke test
+docs/                  Architecture, deployment, FAQ, comparison
+examples/              Sample Jupyter notebook
+.github/               CI, issue and PR templates
+```
 
-**Can I import a Google Colab or Jupyter notebook?** Yes, standard `.ipynb` import/export is supported. Not all widget extensions are implemented.
+## Frequently asked questions
 
-**Can multiple users share a notebook?** Yes, admins provision accounts and notebook owners grant viewer/editor access to trusted collaborators. Editors can execute Python.
+**Can I run Nebula Notebook without a GPU?** Yes. CPU mode is the baseline; GPU is optional and verified on the Ubuntu host.
 
-**Is it suitable for anonymous internet visitors?** **No.** This beta has not been hardened for hostile multi-tenancy.
+**Does Nebula Notebook support existing Jupyter notebooks?** Yes. Import/export the `.ipynb` format; compatibility varies for extensions and interactive widgets (widgets are not included in v0.1).
 
-Find more answers in [FAQ](docs/FAQ.md).
+**Is this a hosted Google Colab replacement?** No. It is a **self-hosted** notebook server using your own hardware, not a hosted computing service.
 
-## Community
+**Can I expose it publicly?** Not to arbitrary users in this beta. Use localhost or a private tunnel for trusted collaborators. See the [security model](SECURITY.md).
 
-- [Issues and feature requests](https://github.com/1998x-stack/Nebula-Notebook/issues)
-- [Contribution guide](CONTRIBUTING.md)
-- [Security policy](SECURITY.md)
-- [Changelog](CHANGELOG.md)
-- [Discoverability and GEO/SEO](docs/DISCOVERABILITY.md)
-- [Machine-readable documentation index](llms.txt)
+**Can multiple users execute code?** Yes, administrators can provision users and notebook owners can grant trusted editors execution permissions. That permission permits running Python against the shared notebook workspace.
 
-**License:** [MIT](LICENSE) · Maintained at [1998x-stack](https://github.com/1998x-stack).
+More answers: [Full FAQ](docs/FAQ.md).
+
+## Community and project governance
+
+- Bugs, feature proposals, usage questions: [GitHub Issues](https://github.com/1998x-stack/Nebula-Notebook/issues)
+- Changes: [Contribution guide](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md)
+- Responsible reporting: [Security policy](SECURITY.md)
+- Releases and changes: [Changelog](CHANGELOG.md)
+- Support scope: [Support guide](SUPPORT.md)
+
+**License:** [MIT](LICENSE). Third-party packages have their own licenses. Maintained by the [1998x-stack GitHub community](https://github.com/1998x-stack).

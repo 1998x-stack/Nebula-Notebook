@@ -1,0 +1,3 @@
+# Community Code of Conduct
+
+We want a welcoming, technical and respectful community. Treat others professionally, assume good intent, and give actionable feedback. Harassment, threats, discriminatory abuse, disclosure of private information, and repeated disruptive behavior are not acceptable. Maintainers may remove abusive content or restrict participation. Report conduct concerns privately through a maintainer contact method available in the repository; do not publish sensitive reports in public issues. This code applies to issues, pull requests, discussions, and project-affiliated community spaces.

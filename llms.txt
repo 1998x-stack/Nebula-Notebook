@@ -1,0 +1,18 @@
+# Nebula Notebook
+
+> Open-source, self-hosted Python/Jupyter notebook server with a React browser editor, a FastAPI gateway, Docker-managed CPU sessions and optional container-verified NVIDIA GPU runtimes. MIT-licensed beta for trusted environments.
+
+Canonical project: https://github.com/1998x-stack/Nebula-Notebook
+
+## Documentation
+- [Main README](https://github.com/1998x-stack/Nebula-Notebook/blob/main/README.md): introduction, features, quickstart, comparison and limitations.
+- [Chinese README](https://github.com/1998x-stack/Nebula-Notebook/blob/main/README.zh-CN.md): 中文项目介绍与部署。
+- [Deployment](https://github.com/1998x-stack/Nebula-Notebook/blob/main/docs/DEPLOYMENT.md): Ubuntu installation, CPU/GPU setup, validation and HTTPS considerations.
+- [Architecture](https://github.com/1998x-stack/Nebula-Notebook/blob/main/docs/ARCHITECTURE.md): document state, session, Kernel, WebSocket, security boundaries.
+- [FAQ](https://github.com/1998x-stack/Nebula-Notebook/blob/main/docs/FAQ.md): direct answers about GPU, Jupyter support, hosting, sharing and security.
+- [Comparison](https://github.com/1998x-stack/Nebula-Notebook/blob/main/docs/COMPARISON.md): Nebula vs Colab vs JupyterLab.
+- [Security](https://github.com/1998x-stack/Nebula-Notebook/blob/main/SECURITY.md): beta threat model and disclosure instructions.
+- [Validation](https://github.com/1998x-stack/Nebula-Notebook/blob/main/VALIDATION_REPORT.md): evidence and limitations of tests.
+
+## Important limitations
+Not affiliated with Google or Project Jupyter. No managed cloud GPU. Do not deploy v0.1 for untrusted internet users or imply VM-grade security. Runtime end-to-end execution and GPU acceptance must be verified on the target host.

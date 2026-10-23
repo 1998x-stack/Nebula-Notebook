@@ -1,0 +1,3 @@
+# Support
+
+For installation questions, read [Deployment](docs/DEPLOYMENT.md), [FAQ](docs/FAQ.md) and [Validation](VALIDATION_REPORT.md) first. For reproducible problems, [open an issue](https://github.com/1998x-stack/Nebula-Notebook/issues/new) with Ubuntu version, Python/Node/Docker versions, mode (CPU/GPU), sanitized logs, a minimal example and expected versus actual behavior. Do not post passwords, private notebooks, full `.env` files or host tokens. Security vulnerabilities should follow [SECURITY.md](SECURITY.md), not public issues. Community support is best-effort and no SLA is provided.
