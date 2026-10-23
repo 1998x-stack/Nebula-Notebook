@@ -113,3 +113,52 @@ async def test_simultaneous_cell_cas_one_winner(clients):
         operate(clients,h,nid,1,'update',cell_id='example',source='b'))
     assert sorted([a.status_code,b.status_code])==[200,409]
     assert (await clients.get(f'/api/notebooks/{nid}')).json()['version']==2
+
+async def test_managed_admission_waits_until_legacy_idle(clients):
+    h,nb=await setup_notebook(clients)
+    nid=nb['id']
+    legacy=await claim(nid,'legacy')
+    task=asyncio.create_task(wait_for_gate(nid,seconds=2))
+    await asyncio.sleep(0.15)
+    assert not task.done()
+    assert await release(nid,legacy)
+    managed=await asyncio.wait_for(task,1.5)
+    assert managed.startswith('run:')
+    assert await release(nid,managed)
+
+
+async def test_another_account_cannot_replay_collaborator_operation(clients):
+    admin,nb=await setup_notebook(clients)
+    nid=nb['id']
+    email='p0c-other-editor@example.test'
+    password='SecureTestPassword124!'
+    created=await clients.post('/api/admin/users',headers=admin,
+                               json={'email':email,'password':password})
+    assert created.status_code==200
+    shared=await clients.put(f'/api/notebooks/{nid}/shares',headers=admin,
+                             json={'email':email,'role':'editor'})
+    assert shared.status_code==200
+    operation_id=uuid4().hex
+    first=await operate(clients,admin,nid,1,'update',
+                        operation_id=operation_id,cell_id='example',source='safe')
+    assert first.status_code==200
+    await clients.post('/api/auth/logout',headers=admin)
+    editor=await login(clients,email,password)
+    duplicate=await operate(clients,editor,nid,1,'update',
+                            operation_id=operation_id,cell_id='example',source='safe')
+    assert duplicate.status_code==409
+    own=await operate(clients,editor,nid,2,'update',cell_id='example',source='my change')
+    assert own.status_code==200
+    events=(await clients.get(f'/api/notebooks/{nid}')).json()
+    assert events['version']==3
+
+
+async def test_runtime_stop_explicitly_resets_uncertain_gate(clients):
+    headers,nb=await setup_notebook(clients)
+    nid=nb['id']
+    token=await claim(nid,'legacy')
+    await uncertain(nid,token)
+    stopped=await clients.delete(f'/api/notebooks/{nid}/runtime',headers=headers)
+    assert stopped.status_code==200,stopped.text
+    next_token=await claim(nid,'run')
+    assert await release(nid,next_token)
