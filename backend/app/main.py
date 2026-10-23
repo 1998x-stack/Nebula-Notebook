@@ -919,6 +919,12 @@ async def notebook_spa(notebook_id: str):
     return await spa_shell()
 
 
+@app.get('/shared')
+async def shared_spa():
+    """Serve shared-with-me SPA deep links."""
+    return await spa_shell()
+
+
 @app.get('/folder/{folder_id}')
 async def folder_spa(folder_id: str):
     """Serve the SPA shell for /folder/<id> deep links."""

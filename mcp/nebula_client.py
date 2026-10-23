@@ -615,6 +615,25 @@ class NebulaClient:
             return None
         return resolved.name or None
 
+    async def list_versions(self, notebook_id: str, limit: int = 50,
+                            before: int | None = None) -> list[dict]:
+        params: dict[str, int] = {"limit": limit}
+        if before is not None:
+            params["before"] = before
+        return await self._json("GET", f"/api/notebooks/{notebook_id}/versions", params=params)
+
+    async def get_version(self, notebook_id: str, version: int) -> dict:
+        return await self._json("GET", f"/api/notebooks/{notebook_id}/versions/{version}")
+
+    async def fork_notebook(self, notebook_id: str, version: int,
+                            title: str | None = None, folder_id: str | None = None) -> dict:
+        payload: dict[str, Any] = {"version": version}
+        if title is not None:
+            payload["title"] = title
+        if folder_id is not None:
+            payload["folder_id"] = folder_id
+        return await self._json("POST", f"/api/notebooks/{notebook_id}/fork", json=payload)
+
     async def get_notebook(self, notebook_id: str) -> dict:
         return await self._json("GET", f"/api/notebooks/{notebook_id}")
 

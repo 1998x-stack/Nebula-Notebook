@@ -197,12 +197,13 @@ async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool
             target['outputs'] = outputs
             target['execution_count'] = count
             checked = checked_document(doc)
+            expected_version = nb.version
             result = await db.execute(update(Notebook).where(
-                Notebook.id == nb.id, Notebook.version == nb.version).values(
+                Notebook.id == nb.id, Notebook.version == expected_version).values(
                 document=checked, version=nb.version+1, updated_at=utcnow(),
                 document_bytes=len(json.dumps(checked, ensure_ascii=False).encode('utf-8'))))
             if result.rowcount:
-                snapshot(db, nb, version=nb.version + 1, title=nb.title,
+                snapshot(db, nb, version=expected_version + 1, title=nb.title,
                          document=checked, author_id=run.actor_id, reason='execute')
                 await db.commit()
                 return True
