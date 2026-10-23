@@ -63,7 +63,7 @@ async def test_conflicting_version_and_operation_id_cannot_overwrite(clients):
     stale_delete=await operate(clients,h,nid,2,'delete',cell_id='example')
     assert stale_delete.status_code==409
     now=(await clients.get(f'/api/notebooks/{nid}')).json()
-    assert now['version']==3 and now['document']['cells'][0]['source']=='correct'
+    assert now['version']==3 and ''.join(now['document']['cells'][0]['source'])=='correct'
 
 async def test_viewer_and_unauthorized_actor_cannot_mutate(clients):
     admin=await login(clients)

@@ -270,6 +270,7 @@ async def worker(run_id: str):
     """Managed runs and direct Kernel sockets use the same exclusive gate."""
     gate_token = None
     kernel_idle_confirmed = False
+    request_dispatched = False
     notebook_id = None
     try:
         async with SessionLocal() as db:
@@ -310,6 +311,7 @@ async def worker(run_id: str):
                 async def stream_batch(batch):
                     await emit_run(run_id, 'run.output', {
                         'outputs': [live_event_preview(entry) for entry in batch]})
+                request_dispatched = True
                 status, outputs, count, error = await execute_jupyter(
                     rt, code, timeout, on_output=stream_batch)
                 kernel_idle_confirmed = True
@@ -339,7 +341,7 @@ async def worker(run_id: str):
         await _finish(run_id, 'failed', error=type(exc).__name__ + ': ' + str(exc))
     finally:
         if gate_token and notebook_id:
-            if kernel_idle_confirmed:
+            if kernel_idle_confirmed or not request_dispatched:
                 await release_kernel(notebook_id, gate_token)
             else:
                 await uncertain_kernel(notebook_id, gate_token)
