@@ -10,6 +10,7 @@ import 'katex/dist/katex.min.css';
 import DOMPurify from 'dompurify';
 import { ArrowDownUp, BookOpen, Folder, FolderInput, FolderPlus, LayoutGrid, List as ListIcon, PanelLeftClose, PanelLeftOpen, Plus, Play, Square, RefreshCcw, Save, Download, Upload, Trash2, ChevronUp, ChevronDown, Code2, FileText, Cpu, LogOut, Users, Shield, X, Settings2, RotateCcw, CircleHelp, Activity, Check, AlertCircle, NotebookPen, Eye, Pencil, CircleStop, Zap, Search, Copy } from 'lucide-react';
 import './style.css';
+import {applyNotebookDelta,mergeRemoteOutput} from './liveEvents.mjs';
 
 // Markdown rendering: GFM tables/lists + KaTeX math ($...$ inline, $$...$$ display).
 // strict:'ignore' keeps KaTeX from throwing on unicode inside math (e.g. \text{中文}),
@@ -311,6 +312,8 @@ function NotebookEditor({id,user,back,logout}) {
  const [dirty,setDirty]=useState(false),[revision,setRevision]=useState(0),[saveTick,setSaveTick]=useState(0),[runningIds,setRunningIds]=useState({});
  const socket=useRef(null),versions=useRef(1),revisions=useRef(0),savingRef=useRef(false),pending=useRef(new Map()),latestDoc=useRef(null),latestTitle=useRef('');
  const dirtyRef=useRef(false),lastExternalVersion=useRef(0);
+ const eventCursorRef=useRef(0),syncedCursorRef=useRef(0),eventStreamRef=useRef(null),liveRef=useRef(false);
+ const [liveConnected,setLiveConnected]=useState(false);
  const canEdit = !!entry && entry.role!=='viewer';
  const [folderCrumb,setFolderCrumb]=useState(null);
  const [historyOpen,setHistoryOpen]=useState(false),[historyRows,setHistoryRows]=useState([]),
@@ -319,7 +322,7 @@ function NotebookEditor({id,user,back,logout}) {
  function editDoc(fn){setDoc(prev=>{const next=typeof fn==='function'?fn(prev):fn;latestDoc.current=next;return next});revisions.current++;dirtyRef.current=true;setRevision(revisions.current);setDirty(true)}
  function updateCell(index,patch){editDoc(d=>({...d,cells:d.cells.map((c,i)=>i===index?{...c,...patch}:c)}))}
  const fetchRuntime=useCallback(async()=>{try{setRuntime(await api(`/notebooks/${id}/runtime`))}catch{}},[id]);
- useEffect(()=>{let active=true; (async()=>{try{const n=await api(`/notebooks/${id}`);if(!active)return;setEntry(n);setDoc(normalize(n.document));latestDoc.current=normalize(n.document);setTitle(n.title);latestTitle.current=n.title;versions.current=n.version;setRuntime(n.runtime||{mode:null,status:'stopped'});if(n.runtime?.status==='ready')connectChannels();setCaps(await api('/runtime/capabilities'));
+ useEffect(()=>{let active=true; (async()=>{try{const n=await api(`/notebooks/${id}`);if(!active)return;setEntry(n);setDoc(normalize(n.document));latestDoc.current=normalize(n.document);setTitle(n.title);latestTitle.current=n.title;versions.current=n.version;eventCursorRef.current=n.event_cursor||0;syncedCursorRef.current=n.event_cursor||0;setRuntime(n.runtime||{mode:null,status:'stopped'});if(n.runtime?.status==='ready')connectChannels();setCaps(await api('/runtime/capabilities'));
    if(n.folder_id){try{const folders=await api('/folders');const f=folders.find(x=>x.id===n.folder_id);if(active&&f)setFolderCrumb({id:f.id,name:f.name})}catch{}}
  }catch(e){if(active)setError(e.message)}})();return()=>{active=false;socket.current?.close()}},[id]);
  const save=useCallback(async()=>{if(!canEdit||savingRef.current||!dirty||!latestDoc.current)return;const at=revisions.current;const snapshot=latestDoc.current;const name=latestTitle.current; savingRef.current=true;setSaving('saving');try{const result=await api(`/notebooks/${id}`,{method:'PUT',body:JSON.stringify({document:snapshot,title:name,version:versions.current})});versions.current=result.version;if(revisions.current===at){dirtyRef.current=false;setDirty(false);setSaving('saved')}else{setSaving('unsaved')}}catch(e){setError(e.message);setSaving('error')}finally{savingRef.current=false;if(revisions.current!==at)setSaveTick(x=>x+1)}},[canEdit,dirty,id]);
@@ -331,6 +334,8 @@ function NotebookEditor({id,user,back,logout}) {
    let closed=false,timer=null;
    async function syncExternal(){
      try{
+       // SSE is primary when healthy; version probe is only a conservative fallback.
+       if(liveRef.current&&!document.hidden)return;
        const revision=await api(`/notebooks/${id}/revision`);
        if(!closed&&revision.version>versions.current){
          if(dirtyRef.current||savingRef.current){
@@ -353,12 +358,99 @@ function NotebookEditor({id,user,back,logout}) {
          }
        }
      }catch(e){if(!closed&&e?.message?.includes('403'))setNotice('Notebook access changed; reload to verify permissions.')}
-     finally{if(!closed)timer=setTimeout(syncExternal,document.hidden?15000:2500)}
+     finally{if(!closed)timer=setTimeout(syncExternal,document.hidden?30000:8000)}
    }
-   timer=setTimeout(syncExternal,2500);
-   const onVisibility=()=>{if(!document.hidden){clearTimeout(timer);timer=setTimeout(syncExternal,250)}};
+   timer=setTimeout(syncExternal,8000);
+   const onVisibility=()=>{if(!document.hidden){clearTimeout(timer);timer=setTimeout(syncExternal,1000)}};
    document.addEventListener('visibilitychange',onVisibility);
    return()=>{closed=true;clearTimeout(timer);document.removeEventListener('visibilitychange',onVisibility)};
+ },[id,entry?.id]);
+
+ // One SSE reader per visible Notebook. Kernel status/output uses the durable
+ // journal; source edits apply small Cell deltas only when the base version is exact.
+ // On reconnect EventSource uses Last-Event-ID; on foreground re-open use last cursor.
+ useEffect(()=>{
+   if(!entry?.id)return;
+   let closed=false,source=null,chain=Promise.resolve(),requestId=0;
+   async function reloadLatest(){
+     const n=await api(`/notebooks/${id}`);
+     if(closed||dirtyRef.current||savingRef.current||n.version<versions.current)return;
+     const next=normalize(n.document);
+     versions.current=n.version;
+     eventCursorRef.current=Math.max(eventCursorRef.current,n.event_cursor||0);
+     syncedCursorRef.current=Math.max(syncedCursorRef.current,n.event_cursor||0);
+     latestDoc.current=next;setDoc(next);latestTitle.current=n.title;setTitle(n.title);
+     setEntry(n);setSaving('saved');
+   }
+   function applyPatch(event){
+     const payload=event.payload||{};
+     const version=event.document_version;
+     if(!version||version<=versions.current)return Promise.resolve();
+     if(dirtyRef.current||savingRef.current){
+       if(lastExternalVersion.current!==version){
+         lastExternalVersion.current=version;
+         setNotice('A collaborator changed this notebook. Resolve your unsaved edits before reloading.');
+       }
+       return Promise.resolve();
+     }
+     const updated=applyNotebookDelta(latestDoc.current,payload,versions.current,version);
+     if(!updated)return reloadLatest();
+     latestDoc.current=updated;setDoc(updated);versions.current=version;
+     if(typeof payload.title==='string'){latestTitle.current=payload.title;setTitle(payload.title);}
+     setEntry(previous=>previous?{...previous,version,title:payload.title||previous.title}:previous);
+     lastExternalVersion.current=0;
+     return Promise.resolve();
+   }
+   async function handleEvent(event){
+     eventCursorRef.current=Math.max(eventCursorRef.current,event.event_id||0);
+     // An authoritative reload already includes these saved outputs/changes.
+     if((event.event_id||0)<=syncedCursorRef.current)return;
+     if(event.kind==='document.committed')return applyPatch(event);
+     const cellId=event.cell_id;
+     if(!cellId)return;
+     if(event.kind==='run.queued'||event.kind==='run.started'||event.kind==='run.cancelling'||event.kind==='run.output'){
+       setRunningIds(previous=>({...previous,[cellId]:true}));
+     }else if(event.kind==='run.finished'){
+       setRunningIds(previous=>{const copy={...previous};delete copy[cellId];return copy;});
+     }
+     if(event.kind==='run.output'&&!dirtyRef.current&&!savingRef.current){
+       const outputs=event.payload?.outputs;
+       if(!Array.isArray(outputs)||outputs.length>100)return;
+       const updated=mergeRemoteOutput(latestDoc.current,cellId,outputs);
+       if(updated){latestDoc.current=updated;setDoc(updated);}
+     }
+   }
+   function disconnect(){
+     if(source){source.close();source=null;}
+     eventStreamRef.current=null;liveRef.current=false;setLiveConnected(false);
+   }
+   function connect(){
+     disconnect();
+     if(closed||document.hidden)return;
+     const thisId=++requestId;
+     source=new EventSource(`/api/notebooks/${encodeURIComponent(id)}/events?after=${eventCursorRef.current}`);
+     eventStreamRef.current=source;
+     source.onopen=()=>{if(closed||thisId!==requestId)return;liveRef.current=true;setLiveConnected(true)};
+     source.addEventListener('notebook',message=>{
+       if(closed||thisId!==requestId)return;
+       try{
+         const event=JSON.parse(message.data);
+         chain=chain.then(()=>handleEvent(event)).catch(()=>reloadLatest().catch(()=>{}));
+       }catch{chain=chain.then(()=>reloadLatest()).catch(()=>{})}
+     });
+     source.addEventListener('access_revoked',()=>{
+       setNotice('Notebook access was revoked or your session expired.');
+       disconnect();
+     });
+     source.onerror=()=>{liveRef.current=false;setLiveConnected(false)};
+   }
+   const visibility=()=>{
+     if(document.hidden)disconnect();
+     else{connect();if(!dirtyRef.current&&!savingRef.current)reloadLatest().catch(()=>{})}
+   };
+   document.addEventListener('visibilitychange',visibility);
+   connect();
+   return()=>{closed=true;disconnect();document.removeEventListener('visibilitychange',visibility)};
  },[id,entry?.id]);
 
  useEffect(()=>{if(!dirty||!canEdit)return;const handler=e=>{e.preventDefault();e.returnValue='';};window.addEventListener('beforeunload',handler);return()=>window.removeEventListener('beforeunload',handler)},[dirty,canEdit]);
@@ -407,7 +499,7 @@ function NotebookEditor({id,user,back,logout}) {
  async function exportNb(){try{if(dirty)await save();const res=await api(`/notebooks/${id}/export`);const blob=await res.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=(title||'notebook').replace(/[^a-z\d_-]/gi,'_')+'.ipynb';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000)}catch(e){setError(e.message)}}
  async function deleteNb(){if(!confirm('Delete this notebook? Its persistent workspace files will be retained.'))return;try{await api(`/notebooks/${id}`,{method:'DELETE'});back()}catch(e){setError(e.message)}}
  if(!entry||!doc)return <div className="editor-loading"><NotebookPen size={28}/>{error||'Loading notebook...' }<button className="btn" onClick={back}>Back</button></div>;
- return <div className="editor-shell"><header className="editor-header"><div className="header-brand"><button className="logo compact" onClick={back} title="Back to notebooks"><NotebookPen size={19}/></button><div><input className="title-input" value={title} disabled={!canEdit} onChange={e=>changeTitle(e.target.value)} aria-label="Notebook title"/><div className="subtitle-small"><span className="bread" onClick={back}>My notebooks</span> / {folderCrumb?<><span className="bread" onClick={()=>{location.href='/folder/'+folderCrumb.id}}>{folderCrumb.name}</span> / </>:null}Python 3 <span className="bullet">·</span> <span className="save-state">{saving==='saving'?'Saving...':dirty?'Unsaved changes':'All changes saved'}</span></div></div></div><div className="head-buttons"><HeaderButton disabled={!canEdit} onClick={save} title="Save"><Save size={16}/> Save</HeaderButton><HeaderButton onClick={exportNb}><Download size={16}/> Export</HeaderButton><HeaderButton onClick={openHistory} title="Browse saved versions or fork a private copy"><BookOpen size={16}/> History / Fork</HeaderButton>{canEdit&&<HeaderButton onClick={()=>setFilesOpen(true)}><FileText size={16}/> Files</HeaderButton>}{entry.role==='owner'&&<HeaderButton onClick={()=>setSharing(true)}><Users size={16}/> Share</HeaderButton>}<button className="avatar top-avatar" title={user.email} onClick={logout}>{user.email[0].toUpperCase()}</button></div></header>
+ return <div className="editor-shell"><header className="editor-header"><div className="header-brand"><button className="logo compact" onClick={back} title="Back to notebooks"><NotebookPen size={19}/></button><div><input className="title-input" value={title} disabled={!canEdit} onChange={e=>changeTitle(e.target.value)} aria-label="Notebook title"/><div className="subtitle-small"><span className="bread" onClick={back}>My notebooks</span> / {folderCrumb?<><span className="bread" onClick={()=>{location.href='/folder/'+folderCrumb.id}}>{folderCrumb.name}</span> / </>:null}Python 3 <span className="bullet">·</span> <span className="save-state">{saving==='saving'?'Saving...':dirty?'Unsaved changes':'All changes saved'} <span aria-label={liveConnected?'Live collaboration connected':'Live collaboration reconnecting'} title={liveConnected?'Live events connected':'Using polling fallback'}>· {liveConnected?'Live':'Sync'}</span></span></div></div></div><div className="head-buttons"><HeaderButton disabled={!canEdit} onClick={save} title="Save"><Save size={16}/> Save</HeaderButton><HeaderButton onClick={exportNb}><Download size={16}/> Export</HeaderButton><HeaderButton onClick={openHistory} title="Browse saved versions or fork a private copy"><BookOpen size={16}/> History / Fork</HeaderButton>{canEdit&&<HeaderButton onClick={()=>setFilesOpen(true)}><FileText size={16}/> Files</HeaderButton>}{entry.role==='owner'&&<HeaderButton onClick={()=>setSharing(true)}><Users size={16}/> Share</HeaderButton>}<button className="avatar top-avatar" title={user.email} onClick={logout}>{user.email[0].toUpperCase()}</button></div></header>
  <div className="editor-toolbar"><div className="toolbar-main"><HeaderButton className="toolbar-primary" disabled={!canEdit} onClick={()=>add(doc.cells.length,'code')}><Plus size={16}/> Code</HeaderButton><HeaderButton disabled={!canEdit} onClick={()=>add(doc.cells.length,'markdown')}><FileText size={16}/> Text</HeaderButton><div className="sep"/><HeaderButton disabled={!canEdit||runtime.status!=='ready'||!channelReady} onClick={runAll}><Play size={16}/> Run all</HeaderButton><HeaderButton disabled={!canEdit||runtime.status!=='ready'} onClick={interrupt}><Square size={15}/> Interrupt</HeaderButton><span className="role-pill"><Shield size={14}/>{entry.role}</span></div><div className="runtime-controls"><span className={'runtime-indicator '+runtime.status}><span/>{runtime.status==='ready'?'Connected':runtime.status==='stopped'?'Disconnected':runtime.status}</span>{runtime.status==='ready'?<><span className="runtime-mode"><Cpu size={15}/> {runtime.mode?.toUpperCase()} {channelReady?"· Kernel ready":"· Kernel disconnected"}</span>{!channelReady&&<HeaderButton onClick={connectChannels}>Reconnect</HeaderButton>}<HeaderButton onClick={stop} disabled={!canEdit||busy}><CircleStop size={16}/> Disconnect</HeaderButton></>:<><select value={choice} onChange={e=>setChoice(e.target.value)} disabled={!canEdit||busy}><option value="cpu">CPU</option>{caps?.gpu_selectable&&<option value="gpu">GPU · {caps.gpu.name?.slice(0,23)}</option>}</select><HeaderButton className="primary" onClick={start} disabled={!canEdit||busy||!caps?.cpu}>{busy?'Connecting...':'Connect'} <Zap size={16}/></HeaderButton></>}</div></div>
  <div className="editor-layout"><main className="cells-panel"><div className="notebook-intro"><small className="eyebrow">INTERACTIVE NOTEBOOK</small><h1>{title}</h1><p>{canEdit?'Write code, explore results, and keep your research in one place.':'Read-only notebook. Contact the owner for editor permission.'}</p></div>{error&&<div className="alert"><AlertCircle size={16}/>{error}<button onClick={()=>setError('')}>×</button></div>}{notice&&<div className="notice"><Check size={15}/>{notice}<button onClick={()=>setNotice('')}>×</button></div>}
  {doc.cells.map((cell,i)=><EditorCell key={cell.id} cell={cell} index={i} canEdit={canEdit} update={updateCell} run={run} remove={remove} move={move} add={add} running={!!runningIds[cell.id]}/>)}

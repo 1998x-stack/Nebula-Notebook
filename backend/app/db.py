@@ -123,6 +123,20 @@ class ExecutionRun(Base):
                                       name='uq_execution_run_idempotency'),)
 
 
+class NotebookEvent(Base):
+    """Durable, globally monotonic SSE cursor. Records are scoped by notebook ACL."""
+    __tablename__ = 'notebook_events'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    notebook_id: Mapped[str] = mapped_column(String(36), index=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    document_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    cell_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Audit(Base):
     __tablename__ = 'audits'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

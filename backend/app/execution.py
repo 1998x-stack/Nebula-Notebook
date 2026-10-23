@@ -26,6 +26,7 @@ from .runtime import start_runtime, interrupt_runtime
 from .security import require_notebook
 from .validation import checked_document
 from .history import snapshot
+from .events import append_event, emit_run, delta as document_delta
 
 log = logging.getLogger(__name__)
 FINAL = frozenset({'succeeded', 'failed', 'timed_out', 'cancelled', 'interrupted', 'stale'})
@@ -104,7 +105,26 @@ async def _jupyter_handshake(ws) -> None:
     raise RuntimeError('Jupyter shell channel did not become ready')
 
 
-async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, list, int | None, str | None]:
+def live_event_preview(entry: dict) -> dict:
+    """Keep SSE events small, even when one Kernel chunk/image is enormous."""
+    raw = len(json.dumps(entry, ensure_ascii=False).encode('utf-8'))
+    if raw <= 10_000:
+        return entry
+    kind = entry.get('output_type')
+    if kind == 'stream':
+        return {'output_type': 'stream', 'name': entry.get('name', 'stdout'),
+                'text': str(entry.get('text', ''))[:4000] +
+                        '\\n[Live preview truncated; full output follows on save]'}
+    if kind == 'error':
+        return {'output_type': 'error', 'ename': str(entry.get('ename','Error'))[:100],
+                'evalue': str(entry.get('evalue',''))[:500],
+                'traceback': ['[Traceback preview limited; inspect saved result]']}
+    return {'output_type': 'display_data',
+            'data': {'text/plain': '[Large rich output available after run finishes]'},
+            'metadata': {}}
+
+
+async def execute_jupyter(rt: Runtime, code: str, timeout: int, on_output=None) -> tuple[str, list, int | None, str | None]:
     """Kernel request, bounded output collection, and explicit busy/idle status."""
     url = ('ws://127.0.0.1:' + str(rt.port) + '/api/kernels/' + str(rt.kernel_id) +
            '/channels?token=' + quote(rt.token, safe='') + '&session_id=' + uuid4().hex)
@@ -124,14 +144,34 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, li
         deadline = time.monotonic() + timeout
         outputs, count, reply = [], None, None
         budget = MAX_OUTPUT_BYTES
+        pending, pending_bytes = [], 0
+        last_sent = time.monotonic()
+
+        async def flush():
+            nonlocal pending, pending_bytes, last_sent
+            if pending and on_output is not None:
+                batch = pending
+                pending, pending_bytes = [], 0
+                last_sent = time.monotonic()
+                try:
+                    await on_output(batch)
+                except Exception:
+                    # Journal outage must not abort an executing Python cell.
+                    log.exception('Notebook output event journal failed')
+            else:
+                pending, pending_bytes = [], 0
+                last_sent = time.monotonic()
+
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise asyncio.TimeoutError()
             try:
-                packet = json.loads(await asyncio.wait_for(ws.recv(), remaining))
+                packet = json.loads(await asyncio.wait_for(ws.recv(), min(remaining, 0.2)))
             except asyncio.TimeoutError:
-                raise
+                if time.monotonic() - last_sent >= 0.2:
+                    await flush()
+                continue
             if packet.get('parent_header', {}).get('msg_id') != ident:
                 continue
             kind = packet.get('header', {}).get('msg_type')
@@ -144,12 +184,18 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, li
                     size = len(json.dumps(entry, ensure_ascii=False).encode())
                     if size <= budget:
                         outputs.append(entry)
+                        pending.append(entry)
+                        pending_bytes += size
                         budget -= size
+                        if pending_bytes >= 12_000 or time.monotonic()-last_sent >= 0.2:
+                            await flush()
                     elif budget > 120:
                         notice = {'output_type': 'stream', 'name': 'stderr',
                                   'text': '[Output truncated: job output limit reached]'}
                         outputs.append(notice)
+                        pending.append(notice)
                         budget = 0
+                        await flush()
             elif kind == 'execute_reply':
                 reply = content
                 if count is None:
@@ -161,6 +207,7 @@ async def execute_jupyter(rt: Runtime, code: str, timeout: int) -> tuple[str, li
                 error = None if status == 'succeeded' else (
                     str(reply.get('ename') or 'Kernel execution failed')[:160] + ': ' +
                     str(reply.get('evalue') or '')[:400])
+                await flush()
                 return status, outputs, count, error
 
 
@@ -175,6 +222,8 @@ async def _finish(run_id: str, status: str, *, outputs=None, count=None, error=N
         run.execution_count = count
         run.error = str(error)[:1000] if error else None
         await db.commit()
+    await emit_run(run_id, 'run.finished', {'status': status,
+                    'error': str(error)[:500] if error else None})
 
 
 async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool:
@@ -197,6 +246,7 @@ async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool
             target['outputs'] = outputs
             target['execution_count'] = count
             checked = checked_document(doc)
+            patch = document_delta(nb.document, checked, nb.title)
             expected_version = nb.version
             result = await db.execute(update(Notebook).where(
                 Notebook.id == nb.id, Notebook.version == expected_version).values(
@@ -205,6 +255,9 @@ async def save_run_output(run_id: str, outputs: list, count: int | None) -> bool
             if result.rowcount:
                 snapshot(db, nb, version=expected_version + 1, title=nb.title,
                          document=checked, author_id=run.actor_id, reason='execute')
+                append_event(db, nb.id, 'document.committed', actor_id=run.actor_id,
+                             version=expected_version + 1, run_id=run.id,
+                             cell_id=run.cell_id, payload=patch)
                 await db.commit()
                 return True
             await db.rollback()
@@ -230,6 +283,9 @@ async def worker(run_id: str):
                     await _finish(run_id, 'cancelled')
                     return
                 run.status, run.started_at = 'running', utcnow()
+                append_event(db, notebook_id, 'run.started', actor_id=run.actor_id,
+                             run_id=run.id, cell_id=run.cell_id,
+                             payload={'status': 'running'})
                 await db.commit()
                 nb = await db.get(Notebook, notebook_id)
                 actor = await db.get(User, run.actor_id)
@@ -244,7 +300,11 @@ async def worker(run_id: str):
                     await _finish(run_id, 'cancelled')
                     return
             try:
-                status, outputs, count, error = await execute_jupyter(rt, code, timeout)
+                async def stream_batch(batch):
+                    await emit_run(run_id, 'run.output', {
+                        'outputs': [live_event_preview(entry) for entry in batch]})
+                status, outputs, count, error = await execute_jupyter(
+                    rt, code, timeout, on_output=stream_batch)
             except asyncio.TimeoutError:
                 try:
                     await interrupt_runtime(rt)
@@ -319,6 +379,9 @@ async def submit_run(db, nb: Notebook, actor_id: str, *, cell_id: str,
                        source_code=source, source_sha256=signature, mode=mode,
                        timeout_seconds=timeout_seconds, status='queued', outputs=[])
     db.add(run)
+    append_event(db, nb.id, 'run.queued', actor_id=actor_id,
+                 run_id=run.id, cell_id=cell_id,
+                 payload={'status': 'queued'})
     try:
         await db.commit()
     except IntegrityError:
@@ -340,9 +403,13 @@ async def request_cancel(db, run: ExecutionRun):
         return run
     if run.status == 'queued':
         run.status, run.cancel_requested, run.finished_at = 'cancelled', True, utcnow()
+        append_event(db, run.notebook_id, 'run.finished', actor_id=run.actor_id,
+                     run_id=run.id, cell_id=run.cell_id, payload={'status': 'cancelled'})
         await db.commit()
         return run
     run.cancel_requested, run.status = True, 'cancelling'
+    append_event(db, run.notebook_id, 'run.cancelling', actor_id=run.actor_id,
+                 run_id=run.id, cell_id=run.cell_id, payload={'status': 'cancelling'})
     await db.commit()
     rt = await db.get(Runtime, run.notebook_id)
     if rt and rt.status == 'ready':

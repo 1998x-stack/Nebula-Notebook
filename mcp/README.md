@@ -233,6 +233,17 @@ Python 副作用。具体限制和测试见 [Execution runs](../docs/EXECUTION_R
 若共享原件已更新就返回冲突；不传参则保持旧客户端自动重试行为。
 新增、删除、移动的 CAS 前置条件将在下一阶段扩展。
 
+### Agent execution visible in the browser (P0-B)
+
+When a notebook is open, MCP `cell_add`, `cell_update`, `cell_move`,
+`cell_delete` saves cause durable `document.committed` events.
+To display **running** output, use `run_submit` (idempotency key), then
+`run_status` or `run_wait`; the browser listens to `run.started`,
+`run.output`, `run.finished` over SSE. Old `cell_run` still displays its
+final saved result but does not stream live into another browser. Shared
+viewers can receive these events only while their permissions remain valid.
+[Protocol / manual acceptance](../docs/LIVE_EVENTS.md).
+
 ### 多用户共享 Notebook 与自由 Fork
 
 每个 Pi/Claude/Codex/OpenCode Agent 使用不同注册用户的
