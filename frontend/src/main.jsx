@@ -445,7 +445,7 @@ function App(){
   useEffect(()=>{
     const sync=()=>{
       const next=routeFromPath();
-      if(location.pathname!=='/'&&!next.id){history.replaceState({},'','/');setRoute({view:'home',id:null});return}
+      if(location.pathname!=='/'&&!next.id&&next.view!=='shared'){history.replaceState({},'','/');setRoute({view:'home',id:null});return}
       setRoute(next);
     };
     window.addEventListener('popstate',sync);

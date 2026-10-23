@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from sqlalchemy import select
 from .conftest import login
-from app.db import SessionLocal, ExecutionRun, Notebook
+from app.db import SessionLocal, ExecutionRun, Notebook, NotebookRevision
 from app.execution import worker, request_cancel, recover_runs, safe_output
 
 pytestmark = pytest.mark.asyncio
@@ -110,6 +110,12 @@ async def test_worker_persists_result_to_original_cell(clients, monkeypatch):
     doc = (await clients.get(f"/api/notebooks/{nb['id']}")).json()
     assert doc['version'] == 2
     assert ''.join(doc['document']['cells'][1]['outputs'][0]['text']) == 'hello\n'
+    async with SessionLocal() as db:
+        revs = (await db.scalars(select(NotebookRevision).where(
+            NotebookRevision.notebook_id == nb['id']).order_by(NotebookRevision.version))).all()
+        assert [r.version for r in revs] == [1, 2]
+        assert revs[-1].reason == 'execute'
+        assert ''.join(revs[-1].document['cells'][1]['outputs'][0]['text']) == 'hello\n'
 
 
 async def test_worker_does_not_overwrite_concurrent_cell_edit(clients, monkeypatch):

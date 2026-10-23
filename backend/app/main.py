@@ -283,7 +283,12 @@ async def list_notebooks(folder_id: str | None = None, db: AsyncSession = Depend
                          actor=Depends(current_user)):
     query = select(Notebook).order_by(Notebook.updated_at.desc())
     if folder_id is not None:
-        query = query.where(Notebook.folder_id == (folder_id or None))
+        # Personal folder filtering must never expose source-owner folders or
+        # include shared notebooks whose real location belongs to another user.
+        if folder_id:
+            await require_folder(db, folder_id, actor, write=False)
+        query = query.where(Notebook.owner_id == actor.id,
+                            Notebook.folder_id == (folder_id or None))
     if not actor.is_admin:
         permitted = select(NotebookPermission.id).where(
             NotebookPermission.notebook_id == Notebook.id, NotebookPermission.user_id == actor.id).exists()

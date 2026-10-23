@@ -45,6 +45,8 @@ async def test_shared_versions_fork_and_revocation(clients):
     assert listing[0]['id'] == nb['id'] and listing[0]['role'] == 'editor'
     assert listing[0]['folder_id'] is None and folder['id'] not in str(listing)
     assert (await clients.get('/api/folders')).json() == []
+    assert (await clients.get(f"/api/notebooks?folder_id={folder['id']}")).status_code == 404
+    assert (await clients.get('/api/notebooks?folder_id=')).json() == []
     assert (await clients.get(f"/api/notebooks/{nb['id']}")).json()['folder_id'] is None
     doc3 = copy.deepcopy(doc2)
     doc3['cells'][1]['source'] = 'print("editor v3")'

@@ -121,6 +121,7 @@ async def main() -> int:
                     "workspace_write", "workspace_read",
                     "folder_list", "folder_create", "folder_ensure",
                     "folder_rename", "folder_delete", "notebook_move",
+                    "notebook_versions", "notebook_version", "notebook_fork",
                     "run_submit", "run_status", "run_wait", "run_cancel",
                 }
                 check("MCP tool catalog", required <= names, sorted(required - names))
@@ -143,6 +144,21 @@ async def main() -> int:
                 nb_id = nb["id"]
                 created.append(nb_id)
                 check("create notebook with initial cells", nb.get("cells") == 3, nb)
+
+                snapshots = await call(session, "notebook_versions",
+                                       {"notebook_id":nb_id})
+                check("history exposes created document", len(snapshots)>=1, snapshots)
+                base_version = snapshots[-1]["version"]
+                history = await call(session, "notebook_version",
+                                     {"notebook_id":nb_id,"version":base_version})
+                check("specific version has cells", len(history["document"]["cells"])==3, history)
+                fork = await call(session, "notebook_fork",
+                                  {"notebook_id":nb_id,"version":base_version,
+                                   "title":"MCP private fork acceptance"})
+                created.append(fork["id"])
+                check("fork has unique notebook ID and independent owner",
+                      fork["id"] != nb_id and fork["role"] == "owner" and
+                      fork["forked_from_notebook_id"] == nb_id, fork)
 
                 listing = await call(session, "notebook_list")
                 check("list notebooks", any(n["id"] == nb_id for n in listing), listing)
