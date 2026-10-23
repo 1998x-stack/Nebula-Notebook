@@ -127,10 +127,20 @@ class SaveNotebook(BaseModel):
 
 
 class CellMutation(BaseModel):
-    operation_id: str = Field(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_-]+
+    operation_id: str = Field(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
+    expected_version: int = Field(ge=1)
+    action: Literal['add', 'update', 'delete', 'move']
+    cell_id: str | None = Field(default=None, max_length=80)
+    index: int | None = None
+    new_index: int | None = None
+    after_cell_id: str | None = Field(default=None, max_length=80)
+    cell_type: Literal['code', 'markdown', 'raw'] | None = None
+    source: str | None = None
+
+
+class ShareNotebook(BaseModel):
     email: str
     role: str
-
 
 
 class SubmitExecutionRun(BaseModel):
