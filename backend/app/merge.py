@@ -229,8 +229,10 @@ async def commit_merge(db, nb: Notebook, actor_id: str, body):
     if result.rowcount != 1:
         await db.rollback()
         raise HTTPException(409, 'Latest version moved; preview merge again')
+    # Operation receipts must be small: Notebook and immutable history already
+    # retain the merged document. Replays return this same compact receipt.
     response = {'notebook_id': nb.id, 'version': version, 'title': plan['title'],
-                'document': doc, 'operation_id': body.operation_id,
+                'operation_id': body.operation_id,
                 'replayed': False, 'resolved_conflicts': plan['applied_resolutions']}
     db.add(CellOperation(id=str(uuid4()), notebook_id=nb.id, actor_id=actor_id,
                          operation_id=body.operation_id, request_hash=expected_hash,
