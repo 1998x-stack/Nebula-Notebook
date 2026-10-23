@@ -169,6 +169,11 @@ async def main() -> int:
                 })
                 x_id = added["cell_id"]
                 check("insert cell at index", added["index"] == 1, added)
+                listed = await call(session, "cell_list", {"notebook_id": nb_id})
+                check("cell_list returns index/cell_id/cell_type/source",
+                      all({"index", "cell_id", "cell_type", "source"} <= set(c) for c in listed)
+                      and all(c["cell_id"] == c["id"] and c["cell_type"] == c["type"] for c in listed)
+                      and any(c["cell_id"] == added["cell_id"] for c in listed), listed)
                 cell = await call(session, "cell_get", {"notebook_id": nb_id, "cell_id": x_id})
                 check("get inserted cell", cell["source"] == "x = 2\nprint(x)", cell)
                 updated = await call(session, "cell_update", {
@@ -460,6 +465,26 @@ async def main() -> int:
                 check("share list", isinstance(await call(session, "share_list", {"notebook_id": nb_id}), list))
                 check("user list (admin)", isinstance(await call(session, "user_list"), list))
                 check("audit list (admin)", isinstance(await call(session, "audit_list", {"limit": 5}), list))
+
+                # ---- sharing round trip: grant -> revoke (dedicated probe user) ----
+                probe_email = f"mcp-probe-{str(nb_id)[:8]}@example.invalid"
+                made = await call(session, "user_create", {"email": probe_email, "password": "probe-password-123", "is_admin": False})
+                check("user_create returns the new user",
+                      made.get("email") == probe_email and made.get("is_active") is not False, made)
+                probe = next((u for u in await call(session, "user_list") if u.get("email") == probe_email), None)
+                check("created user appears in user_list", probe is not None, probe)
+                grant = await call(session, "share_add", {
+                    "notebook_id": nb_id, "email": probe_email, "role": "viewer"
+                })
+                shares_after_add = await call(session, "share_list", {"notebook_id": nb_id})
+                check("share_add grants the role",
+                      any(s.get("email") == probe_email and s.get("role") == "viewer" for s in shares_after_add), grant)
+                await call(session, "share_remove", {"notebook_id": nb_id, "user_id": probe["id"]})
+                shares_after_remove = await call(session, "share_list", {"notebook_id": nb_id})
+                check("share_remove revokes the role",
+                      not any(s.get("email") == probe_email for s in shares_after_remove), shares_after_remove)
+                deactivated = await call(session, "user_set_active", {"user_id": probe["id"], "is_active": False})
+                check("user_set_active deactivates", deactivated.get("is_active") is False, deactivated)
 
                 err = await expect_error(session, "notebook_get", {
                     "notebook_id": "00000000-0000-0000-0000-000000000000"

@@ -107,7 +107,17 @@ def render(tools: list[dict]) -> str:
             names = ', '.join(f'`{p["name"]}:{p["type"]}`' for p in tool['params'])
             lines.append(f'| `{name}` | {names or "—"} | |')
         lines.append('')
-    lines += ['每个工具的返回值都是 JSON 对象；执行类工具返回 `outputs`（stream / error / `data_keys`），', '大图默认只给摘要，需要原始 MIME 时传 `include_data=true`。参数含义见各工具 docstring（`mcp/server.py`）。', '', END]
+    lines += [
+        '返回值约定：',
+        '',
+        '- 返回对象的工具：`structuredContent` 就是该对象。',
+        '- 返回列表的工具（如 `notebook_list`、`cell_list`、`user_list`）：`structuredContent` 形如 `{"result": [...]}`，只有文本通道的客户端会按元素拆成多个 content block —— 客户端应优先读 `structuredContent`。',
+        '- 执行类工具返回 `outputs`（stream / error / `data_keys`）；大图默认只给摘要，需要原始 MIME 时传 `include_data=true`。',
+        '',
+        '参数含义见各工具 docstring（`mcp/server.py`）。',
+        '',
+        END,
+    ]
     return '\n'.join(lines)
 
 
