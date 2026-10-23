@@ -369,57 +369,67 @@ async def cell_get(notebook_id: str, cell_id: str | None = None,
 @mcp.tool(annotations=WRITE)
 async def cell_add(notebook_id: str, source: str = "",
                    cell_type: Literal["code", "markdown", "raw"] = "code",
-                   index: int | None = None, after_cell_id: str | None = None) -> dict:
-    """Add a cell. Position: after_cell_id wins, else 0-based index, else append.
+                   index: int | None = None, after_cell_id: str | None = None, expected_version: int | None = None,
+                   operation_id: str | None = None) -> dict:
+    """Strict version-CAS Cell insertion; supply operation_id for retry safety.
+
+    Position: after_cell_id wins, else 0-based index, else append.
 
     Negative indexes count from the end; indexes beyond the end append.
     """
     _require_write("cell_add")
     return await client.add_cell(
         notebook_id, source=source, cell_type=cell_type,
-        index=index, after_cell_id=after_cell_id)
+        index=index, after_cell_id=after_cell_id, expected_version=expected_version,
+        operation_id=operation_id)
 
 
 @mcp.tool(annotations=WRITE)
 async def cell_insert(notebook_id: str, source: str = "",
                       cell_type: Literal["code", "markdown", "raw"] = "code",
                       index: int | None = None,
-                      after_cell_id: str | None = None) -> dict:
+                      after_cell_id: str | None = None, expected_version: int | None = None,
+                   operation_id: str | None = None) -> dict:
     """Alias of cell_add: insert a cell at an index or after an existing cell."""
     _require_write("cell_insert")
     return await client.add_cell(
         notebook_id, source=source, cell_type=cell_type,
-        index=index, after_cell_id=after_cell_id)
+        index=index, after_cell_id=after_cell_id, expected_version=expected_version,
+        operation_id=operation_id)
 
 
 @mcp.tool(annotations=WRITE)
 async def cell_update(notebook_id: str, cell_id: str | None = None,
                       index: int | None = None, source: str | None = None,
                       cell_type: Literal["code", "markdown", "raw"] | None = None,
-                      expected_version: int | None = None) -> dict:
-    """Update a cell's source and/or type (changing type keeps the document valid)."""
+                      expected_version: int | None = None, operation_id: str | None = None) -> dict:
+    """Strict version-CAS Cell modification. Reuse operation_id + expected_version on retry."""
     _require_write("cell_update")
     return await client.update_cell(
         notebook_id, cell_id=cell_id, index=index,
         source=source, cell_type=cell_type,
-        expected_version=expected_version)
+        expected_version=expected_version, operation_id=operation_id)
 
 
 @mcp.tool(annotations=DESTRUCTIVE)
 async def cell_delete(notebook_id: str, cell_id: str | None = None,
-                      index: int | None = None) -> dict:
-    """Delete a cell by id or 0-based index."""
+                      index: int | None = None, expected_version: int | None = None,
+                   operation_id: str | None = None) -> dict:
+    """Strict CAS delete; use immutable operation_id for replay-safe retries."""
     _require_write("cell_delete")
-    return await client.delete_cell(notebook_id, cell_id=cell_id, index=index)
+    return await client.delete_cell(notebook_id, cell_id=cell_id, index=index, expected_version=expected_version,
+        operation_id=operation_id)
 
 
 @mcp.tool(annotations=WRITE)
 async def cell_move(notebook_id: str, new_index: int, cell_id: str | None = None,
-                    index: int | None = None) -> dict:
-    """Move a cell to a new 0-based index."""
+                    index: int | None = None, expected_version: int | None = None,
+                   operation_id: str | None = None) -> dict:
+    """Strict CAS move; concurrent changes return 409 rather than auto-rebasing."""
     _require_write("cell_move")
     return await client.move_cell(
-        notebook_id, new_index=new_index, cell_id=cell_id, index=index)
+        notebook_id, new_index=new_index, cell_id=cell_id, index=index,
+        expected_version=expected_version, operation_id=operation_id)
 
 
 # Durable jobs keep running even when an MCP request ends. Use for training/long cells.
