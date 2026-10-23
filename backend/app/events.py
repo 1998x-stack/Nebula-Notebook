@@ -176,6 +176,7 @@ async def notebook_stream(request: Request, notebook_id: str, after: int) -> Asy
                     .order_by(NotebookEvent.id).limit(MAX_EVENTS_PER_QUERY))).all()
         if reset_reason:
             yield ('event: stream_reset\n'
+                   f'id: {position}\n'
                    'data: ' + json.dumps({'reason': reset_reason, 'floor': floor,
                                            'cursor': newest}) + '\n\n')
             last_heartbeat = time.monotonic()
