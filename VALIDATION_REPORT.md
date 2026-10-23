@@ -1,5 +1,10 @@
 # Validation status (2026-10-23; beta source release)
 
+## Verified by GitHub Actions on the published source
+
+- On commit [772702a](https://github.com/1998x-stack/Nebula-Notebook/commit/772702aff7f2afdfb3c40bafbfe4ceb75071a971), the GitHub **backend** and **frontend** checks reported **success** (checked 2026-10-23).
+- These checks cover Python API tests and an npm frontend build in a hosted CI environment. They do **not** run a Docker-based Jupyter smoke test or access an NVIDIA GPU.
+
 ## Verified in the artifact-building environment
 
 - Python source parsing/compilation (`python -m compileall`): PASS.
@@ -8,7 +13,7 @@
 - `examples/intro.ipynb` complete notebook schema validation: PASS.
 - Both CPU and GPU Dockerfiles, real Jupyter communication and resource checks are provided as source; **not executed here**.
 
-## Not verified in the artifact-building environment
+## Not verified locally (CI checks above passed)
 
 - `npm install` / `npm run build`: no external package registry network access.
 - Full pytest API tests: `aiosqlite` and Docker SDK absent, external package registry inaccessible.
