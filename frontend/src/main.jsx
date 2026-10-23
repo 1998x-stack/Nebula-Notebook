@@ -25,6 +25,13 @@ async function api(path, options={}) {
   return res;
 }
 function sourceText(src) { return Array.isArray(src) ? src.join('') : (src || ''); }
+function nbOutput(kind, content) {
+  if (kind === 'stream') return {output_type:'stream', name:content.name || 'stdout', text:sourceText(content.text)};
+  if (kind === 'error') return {output_type:'error', ename:content.ename || 'Error', evalue:content.evalue || '', traceback:content.traceback || []};
+  const out = {output_type:kind === 'execute_result' ? 'execute_result' : 'display_data', data:content.data || {}, metadata:content.metadata || {}};
+  if (kind === 'execute_result') out.execution_count = content.execution_count ?? null;
+  return out;
+}
 function normalize(doc) { return {...doc, cells: (doc.cells || []).map(c=>{const {outputs, execution_count, ...rest}=c; return c.cell_type==='code' ? {...rest, source: sourceText(c.source), outputs: outputs || [], execution_count: execution_count ?? null} : {...rest, source: sourceText(c.source)};})}; }
 function HeaderButton({children, onClick, className='', disabled=false, title='', ...props}) {return <button {...props} title={title} onClick={onClick} disabled={disabled} className={'btn '+className}>{children}</button>}
 function newCell(type='code') { return {cell_type:type, id:randomId(), metadata:{}, source:'', ...(type==='code'?{outputs:[],execution_count:null}:{})}; }
@@ -127,7 +134,7 @@ function NotebookEditor({id,user,back,logout}) {
    if(kind==='status'&&m.content?.execution_state==='idle'){pending.current.delete(req);setRunningIds(s=>{const x={...s};delete x[cellId];return x});return}
    if(kind==='status'||kind==='execute_reply')return;
    editDoc(d=>({...d,cells:d.cells.map(c=>{if(c.id!==cellId)return c;let changes={};if(kind==='execute_input')changes.execution_count=m.content?.execution_count;
-      if(['stream','execute_result','display_data','error'].includes(kind)){const out={...m.content};out.output_type=kind==='execute_result'?'execute_result':kind==='display_data'?'display_data':kind==='error'?'error':'stream';changes.outputs=[...(c.outputs||[]),out];}return {...c,...changes}})}));
+      if(['stream','execute_result','display_data','error'].includes(kind)){changes.outputs=[...(c.outputs||[]), nbOutput(kind, m.content || {})];}return {...c,...changes}})}));
  }
  function connectChannels(){setChannelReady(false);const proto=location.protocol==='https:'?'wss:':'ws:';const w=new WebSocket(`${proto}//${location.host}/api/notebooks/${id}/channels`);w.onopen=()=>setChannelReady(true);w.onmessage=e=>receiveMessage(e.data);w.onerror=()=>setNotice('Kernel WebSocket error — check connection.');w.onclose=()=>{if(socket.current===w){socket.current=null;setChannelReady(false);setRunningIds({});}};socket.current=w;return w;}
  async function start(){setBusy(true);setError('');try{if(choice==='gpu'&&!caps?.gpu_selectable)throw new Error('GPU unavailable on this server');const r=await api(`/notebooks/${id}/runtime`,{method:'POST',body:JSON.stringify({mode:choice})});setRuntime(r);socket.current?.close();connectChannels();setNotice(`${choice.toUpperCase()} runtime connected`)}catch(e){setError(e.message)}finally{setBusy(false)}}
