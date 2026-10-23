@@ -144,6 +144,21 @@ Capture at 1440x900 or similar; use anonymized demo notebooks. Optimize screensh
 These illustrate current and proposed features; do not depict proposed features as shipped.
 -->
 
+### Durable history, backup and event replay recovery (P0-F)
+
+P0-F introduces **versioned SQLite migrations**, per-Notebook SSE retention
+floors with explicit `stream_reset` recovery, and operator-controlled
+**offline backup / SHA-256 verification / empty-directory restore**. The browser
+reloads the authoritative Notebook if its replay cursor was pruned, while
+keeping any unsaved draft available for P0-E conflict resolution.
+
+Historical Notebook revisions are **not pruned automatically**: any retained
+version can still be Forked or used as a three-way merge base. Event compaction
+is manual and disabled by default. Artifact object storage, snapshot
+compression and hosted multi-tenant quotas are still outstanding.
+
+[Storage reliability, backup and restoration runbook →](docs/STORAGE_RELIABILITY.md).
+
 ### Recoverable shared editing and explicit three-way merges (P0-E)
 
 If a human or MCP Agent edits an older Notebook version while another

@@ -20,8 +20,23 @@
 | 多账号共享 | 同一个 Notebook ID 授权多人编辑，首页单独的 Shared with me 视图 |
 | 历史版本 & 私人 Fork | 成功保存自动生成历史快照；可从任意已保存版本创建自己的独立 Notebook |
 | 持久化 | SQLite、文档版本控制、ipynb 导入导出、工作目录 |
-| Agent 接入 | 54-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
+| Agent 接入 | 57-tool stdio MCP server，支持 Pi / Claude / Codex / OpenCode |
 | 运维 | Ubuntu 检测、部署脚本、冒烟测试与 CI |
+
+## P0-F：持久化事件、备份恢复和数据库迁移
+
+数据库启动升级使用可追踪的 SQLite Schema 版本；SSE 事件支持
+**每个 Notebook 单独记录清理水位**，断线重连游标已过期时发出
+`stream_reset`，浏览器重新读取权威文档而不覆盖本地未保存草稿。
+
+新增运维脚本 `scripts/storage_admin.py` 和 `scripts/storage_backup.py`：
+前者以只读报告/预览为默认，事件清理必须由管理员显式执行；
+后者提供离线 SQLite + Workspace 备份、SHA-256 校验、完整性检查和
+安全恢复到空目录。所有不可变历史版本默认保留，不会因事件压缩
+导致历史 Fork 或三方合并失效。
+
+[完整升级、备份与游标恢复指南](docs/STORAGE_RELIABILITY.md)。
+Artifact 对象存储及历史快照压缩仍属后续优化。
 
 ## P0-E：冲突恢复、三方合并与私人草稿 Fork
 

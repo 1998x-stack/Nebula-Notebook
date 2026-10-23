@@ -80,11 +80,15 @@ these legacy calls.
   outbox or Redis Streams before horizontal scaling.
 - Patches with >40 changed Cells, >1,000 ordered Cells or >48 KiB encoded
   payload fall back to an authoritative Notebook fetch.
-- No journal pruning yet. **Unbounded event retention, rich output storage
-  and full JSON version snapshots can grow the database.** Add quotas,
-  compression/object storage, pruning/retention, and reset-cursor semantics
-  before production. The managed run output event count is bounded by its
-  independent 160 KiB run-output cap.
+- **P0-F:** event retention is administrator-controlled and offline-only,
+  disabled by default. The explicit maintenance command persists a
+  per-Notebook floor and sends `stream_reset` to expired SSE cursors; the
+  editor reloads the authoritative Notebook without overwriting dirty edits.
+  Immutable JSON version snapshots remain unbounded and are intentionally
+  retained to keep old forks and merge bases valid. Artifact storage, snapshot
+  compression/quotas and higher-scale event transport remain future work.
+  The managed run output event count is bounded by its independent
+  160 KiB run-output cap. See [storage runbook](STORAGE_RELIABILITY.md).
 - Notebook deletion removes its event rows. There are no separate
   user-notification streams and no cross-notebook broadcast.
 - SSE delivers committed changes, not kernel memory snapshots or an
