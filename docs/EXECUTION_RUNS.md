@@ -73,32 +73,38 @@ With the CPU image built and a trusted dedicated Agent account,
 create a Notebook containing `print(1 + 1)`, use `run_submit` from the MCP
 client, poll `run_wait` until terminal, then open the same Notebook in the UI.
 
-## Operational and security boundaries
+## Operational and security boundaries (P0-D updated)
 
-- Python is permitted to perform arbitrary filesystem/network side effects
-  in the already-trusted Kernel container; cancellation does not undo them.
-- Starting a managed job excludes *new* legacy WebSocket execute messages,
-  but code already executing before job admission may still overlap.
-- Deleting a Notebook or stopping its Runtime returns HTTP 409 while a managed\n  execution is queued, running or cancelling. Cancel/finish first.\n- Each notebook has a process-local execution lock. Multiple API workers
-  or multiple app instances are **not supported**: a database-backed queue,
-  leader election and distributed locks are needed first.
-- On server restart unfinished database runs are marked interrupted, with no
-  automatic rerun. A surviving Jupyter Kernel process could still be active.
-- This implementation captures completion, not token-by-token Agent-to-browser
-  execution events. P0 Phase 2 will add SSE events, sequence cursors and
-  short output batches. Existing Notebook revision polling shows saved results.
+- Python external side effects are never guaranteed exactly-once.
+  Cancellation and interrupt requests do not undo external filesystem/network work.
+- The P0-C database Kernel gate serializes browser WebSocket requests and
+  managed runs. A missing completion status retains an **uncertain** gate.
+- P0-D now distinguishes failures before execute_request dispatch from
+  requests whose send outcome is uncertain; pre-dispatch failures safely
+  release the gate, and each terminal run status is committed atomically with
+  its durable `run.finished` event.
+- Server restart never automatically resubmits an unfinished run. Startup
+  marks queued/running/cancelling runs `interrupted`, journals corresponding
+  terminal events and conservatively marks active Kernel gates uncertain.
+- The editor-scoped `GET /api/notebooks/{id}/execution-state` endpoint
+  provides gate state, recent active runs, recovery requirement and an opaque
+  Runtime generation fingerprint. It does not expose Docker IDs or tokens.
+- Only an explicit stop of the Notebook Runtime clears its uncertain gate.
+  Managed jobs must first be cancelled and reach a terminal state.
+- Running multiple API workers/nodes or untrusted public tenants is not
+  supported by this SQLite single-process implementation.
+
+See [P0-D execution lifecycle hardening](LIFECYCLE_HARDENING.md) for
+fault injection, live CPU Docker smoke tests and acceptance boundaries.
 
 ## Next incremental milestones
 
-1. P0 Phase 2: single durable event cursor per notebook, SSE replay and live
-   started/stdout/display/finished events, browser incremental rendering.
-2. P0 Phase 3: isolation of direct vs managed execution, retries across
-   app restarts, provider-independent executor interface and load tests.
-3. P1 Autoresearch: `Experiment`, `Trial`, `Metric`, `Artifact`,
-   immutable evaluator and reproducibility checks.
-4. P1 Multi-kernel: Kernel registry + IRkernel / xeus-cling execution images.
-5. P1 release: reproducible multi-OS smoke acceptance, screenshots and
-   documented threat model.
+1. P0-D host acceptance: actual browser WebSocket vs managed run, app
+   crash/restart, cancellation and explicit uncertain-state recovery.
+2. P0-E: Cell conflict resolution using base/mine/theirs, explicit merge,
+   browser and MCP CAS alignment.
+3. P0-F: schema migrations, bounded event/snapshot retention, backup/restore.
+4. P1: reproducible Autoresearch trials, artifacts and Kernel Registry.
 
 ### Real CPU acceptance (on a developer host)
 
