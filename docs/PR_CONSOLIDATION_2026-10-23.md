@@ -19,11 +19,15 @@ This consolidation changes dependency manifests, the lockfile, and CI; it does n
 | #9 | aiosqlite 0.20.0 → 0.22.1 | Run database transaction tests |
 | #10 | pydantic-settings 2.6.1 → 2.16.0 | Check settings load at startup |
 | #11 | react 18.3.1 → 19.3.1 | Must be paired with react-dom #15 |
-| #12 | uvicorn 0.34.0 → 0.54.0 | Check live HTTP and WebSocket traffic |
+| #12 | uvicorn 0.34.0 → 0.54.0 | Requires websockets >=13; align direct websockets pin to 13.1 |
 | #13 | lucide-react 0.468.0 → 1.59.0 | Verify imported icons render |
 | #14 | @vitejs/plugin-react 4.7.0 → 6.1.2 | Peer dependency requires Vite 8 |
 | #15 | react-dom 18.3.1 → 19.3.1 | Must be paired with React #11 |
 | #16 | react-markdown 9.1.0 → 10.1.0 | No className usage found on the ReactMarkdown component |
+
+## CI-derived compatibility fix
+
+The first CI run revealed a real dependency resolution conflict: `uvicorn[standard]==0.54.0` requires `websockets>=13`, while the repository still pinned `websockets==12.0`. Updated the direct pin to `websockets==13.1` to satisfy both sides; subsequent CI must demonstrate an install and test pass.
 
 ## Resolution
 
