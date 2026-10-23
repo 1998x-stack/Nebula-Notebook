@@ -822,6 +822,73 @@ class NebulaClient:
             "mode": mode, "timeout_seconds": timeout_seconds,
         })
 
+    # ---------- Agent-native reproducible research (P1-A) ----------
+    async def research_list(self, notebook_id: str) -> list[dict]:
+        return await self._json("GET", f"/api/notebooks/{notebook_id}/research")
+
+    async def research_create(self, notebook_id: str, *, title: str,
+                              evaluator_cell_id: str, metric_name: str,
+                              direction: str, dataset_sha256: str,
+                              environment_sha256: str, mode: str = "cpu",
+                              trial_timeout_seconds: int = 300,
+                              max_trials: int = 5) -> dict:
+        return await self._json("POST", f"/api/notebooks/{notebook_id}/research", json={
+            "title": title, "evaluator_cell_id": evaluator_cell_id,
+            "metric_name": metric_name, "direction": direction,
+            "dataset_sha256": dataset_sha256,
+            "environment_sha256": environment_sha256, "mode": mode,
+            "trial_timeout_seconds": trial_timeout_seconds, "max_trials": max_trials})
+
+    async def research_get(self, notebook_id: str, experiment_id: str) -> dict:
+        return await self._json("GET", f"/api/notebooks/{notebook_id}/research/{experiment_id}")
+
+    async def research_trial_register(self, notebook_id: str, experiment_id: str,
+                                      trial_key: str, run_id: str, notebook_version: int,
+                                      hypothesis: str) -> dict:
+        return await self._json("POST",
+            f"/api/notebooks/{notebook_id}/research/{experiment_id}/trials", json={
+                "trial_key": trial_key, "run_id": run_id,
+                "notebook_version": notebook_version, "hypothesis": hypothesis})
+
+    async def research_trial_finalize(self, notebook_id: str, experiment_id: str,
+                                      trial_id: str, evaluator_run_id: str) -> dict:
+        return await self._json("POST",
+            f"/api/notebooks/{notebook_id}/research/{experiment_id}/trials/{trial_id}/finalize",
+            json={"evaluator_run_id": evaluator_run_id})
+
+    async def research_close(self, notebook_id: str, experiment_id: str) -> dict:
+        return await self._json("POST",
+            f"/api/notebooks/{notebook_id}/research/{experiment_id}/close")
+
+    async def research_artifacts(self, notebook_id: str, experiment_id: str) -> list[dict]:
+        return await self._json("GET",
+            f"/api/notebooks/{notebook_id}/research/{experiment_id}/artifacts")
+
+    async def research_artifact_upload(self, notebook_id: str, experiment_id: str,
+                                       trial_id: str, path: str,
+                                       name: str | None = None) -> dict:
+        file = self.resolve_path(path)
+        if file.stat().st_size > 8_000_000:
+            raise NebulaError("Artifact upload is limited to 8 MB")
+        data = file.read_bytes()
+        r = await self._request("POST",
+            f"/api/notebooks/{notebook_id}/research/{experiment_id}/trials/{trial_id}/artifacts",
+            files={"file": (name or file.name, data,
+                             mimetypes.guess_type(name or file.name)[0] or "application/octet-stream")})
+        return r.json()
+
+    async def research_artifact_download(self, notebook_id: str, experiment_id: str,
+                                         artifact_id: str, path: str,
+                                         overwrite: bool = False) -> dict:
+        target = self.resolve_path(path)
+        if target.exists() and not overwrite:
+            raise NebulaError("Artifact destination already exists")
+        r = await self._request("GET",
+            f"/api/notebooks/{notebook_id}/research/{experiment_id}/artifacts/{artifact_id}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(r.content)
+        return {"artifact_id": artifact_id, "path": str(target), "bytes":len(r.content)}
+
     async def get_run(self, notebook_id: str, run_id: str) -> dict:
         return await self._json("GET", f"/api/notebooks/{notebook_id}/runs/{run_id}")
 
