@@ -25,23 +25,24 @@ If using an SSH tunnel, point to the tunneled localhost endpoint. Configure
 `NEBULA_MCP_FS_ROOT` to a dedicated, least-privilege workspace path.
 `NEBULA_MCP_READONLY=1` blocks write and kernel-execution operations.
 
-## Pi (with a compatible MCP extension)
+## Pi Agent
 
-Pi installations do not all expose a native `pi mcp` command. Install and
-review a compatible MCP extension first (for example, the current
-`pi-mcp-extension`), then verify `pi mcp --help` before using the provided
-registration helper:
+Current Pi CLI documents built-in `pi mcp add`/`pi mcp list` commands;
+do not install a third-party extension just to enable the stdio integration.
+Confirm the installed CLI version supports these commands:
 
 ```bash
-pi install npm:pi-mcp-extension
 pi mcp --help
 NEBULA_MCP_FS_ROOT="$HOME/nebula-agent-workspace" ./mcp/install-pi.sh
 pi mcp list
 ```
 
-`install-pi.sh` writes `~/.pi/agent/mcp.json` through the compatible
-extension CLI and defaults to codemode exposure. Never paste credentials into
-a shared Pi session. Extension versions can change these commands.
+The install helper registers one user-level MCP server and defaults to
+`codemode` exposure. If `pi mcp` is missing, update Pi or consult its MCP
+documentation rather than assuming an unrelated extension implements the
+same CLI. Protect your agent credentials and trust the project directory.
+
+Upstream Pi CLI reference: https://pi.dev/docs/latest/cli
 
 ## Claude Code
 
