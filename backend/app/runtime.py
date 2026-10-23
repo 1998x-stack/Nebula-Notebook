@@ -70,7 +70,10 @@ async def capabilities(refresh=False):
             try:
                 gpu = await asyncio.wait_for(asyncio.to_thread(probe_gpu_sync), timeout=settings.gpu_probe_timeout + 10)
             except Exception as exc:
-                gpu = {'available': False, 'name': None, 'reason': str(exc)[:180]}
+                reason = str(exc)[:180]
+                if type(exc).__name__ == 'ImageNotFound' or 'No such image' in reason:
+                    reason = 'GPU runtime image (nebula-runtime:gpu) is not built on this server'
+                gpu = {'available': False, 'name': None, 'reason': reason}
         result = {'docker': docker_ok, 'cpu': cpu_image_ready, 'gpu': gpu,
                   'cpu_reason': '' if docker_ok else cpu_reason,
                   'gpu_selectable': bool(gpu['available'])}

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import secrets
+import time
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -351,6 +352,42 @@ async def interrupt(notebook_id: str, db: AsyncSession = Depends(get_db), actor=
 ALLOWED_MSGS = {'execute_request', 'kernel_info_request', 'complete_request', 'inspect_request', 'is_complete_request'}
 
 
+async def kernel_handshake(kernel_ws, timeout=6.0):
+    """Wait until Jupyter Server has subscribed to the kernel channels.
+
+    Jupyter Server's connection nudge consumes IOPub messages while it verifies
+    the kernel sockets. A client message sent during that window is executed but
+    its outputs are not forwarded. Repeatedly send a harmless kernel_info
+    request until a reply is forwarded; that confirms the relay is subscribed.
+    Busy kernels skip the nudge, so a timeout is not fatal.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        msg_id = uuid4().hex
+        await kernel_ws.send(json.dumps({
+            'channel': 'shell',
+            'header': {'msg_id': msg_id, 'username': 'nebula', 'session': uuid4().hex,
+                       'date': utcnow().isoformat(), 'msg_type': 'kernel_info_request',
+                       'version': '5.3'},
+            'parent_header': {}, 'metadata': {}, 'content': {}, 'buffers': [],
+        }))
+        attempt_end = min(deadline, time.monotonic() + 0.8)
+        while time.monotonic() < attempt_end:
+            try:
+                raw = await asyncio.wait_for(kernel_ws.recv(),
+                                             timeout=max(0.1, attempt_end - time.monotonic()))
+            except asyncio.TimeoutError:
+                break
+            try:
+                parsed = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if (parsed.get('header', {}).get('msg_type') == 'kernel_info_reply'
+                    and parsed.get('parent_header', {}).get('msg_id') == msg_id):
+                return True
+    return False
+
+
 @app.websocket('/api/notebooks/{notebook_id}/channels')
 async def kernel_channels(ws: WebSocket, notebook_id: str):
     async with SessionLocal() as db:
@@ -370,6 +407,8 @@ async def kernel_channels(ws: WebSocket, notebook_id: str):
     url = f'ws://127.0.0.1:{port}/api/kernels/{kid}/channels?token={token}&session_id={uuid4()}'
     try:
         async with websockets.connect(url, max_size=8_000_000, ping_interval=20, open_timeout=10) as kernel_ws:
+            # Do not accept browser messages until the Jupyter relay is subscribed.
+            await kernel_handshake(kernel_ws)
             await ws.accept()
 
             async def client_to_kernel():
@@ -413,13 +452,18 @@ async def kernel_channels(ws: WebSocket, notebook_id: str):
                         await ws.send_text(msg)
 
             tasks = [asyncio.create_task(client_to_kernel()), asyncio.create_task(kernel_to_client())]
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
-            for task in done:
-                try: task.result()
-                except (WebSocketDisconnect, ConnectionClosed, RuntimeError): pass
+            try:
+                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                for task in done:
+                    try: task.result()
+                    except (WebSocketDisconnect, ConnectionClosed, RuntimeError): pass
+            finally:
+                # Do not leave the browser socket silently open if the kernel relay ends.
+                try: await ws.close()
+                except RuntimeError: pass
     except (OSError, ConnectionClosed, TimeoutError):
         try: await ws.close(code=1011, reason='Kernel connection lost')
         except RuntimeError: pass
