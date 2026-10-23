@@ -29,7 +29,9 @@ async function api(path, options={}) {
   if (!res.ok) {
     let message;
     try { message = (await res.json()).detail; } catch { message = res.statusText; }
-    throw new Error(typeof message === 'string' ? message : JSON.stringify(message));
+    const error = new Error(typeof message === 'string' ? message : JSON.stringify(message));
+    error.status = res.status;
+    throw error;
   }
   if ((res.headers.get('content-type') || '').includes('application/json')) return res.json();
   return res;
@@ -312,6 +314,11 @@ function NotebookEditor({id,user,back,logout}) {
  const [dirty,setDirty]=useState(false),[revision,setRevision]=useState(0),[saveTick,setSaveTick]=useState(0),[runningIds,setRunningIds]=useState({});
  const socket=useRef(null),versions=useRef(1),revisions=useRef(0),savingRef=useRef(false),pending=useRef(new Map()),latestDoc=useRef(null),latestTitle=useRef('');
  const dirtyRef=useRef(false),lastExternalVersion=useRef(0);
+ const baselineRef=useRef(null),baselineTitleRef=useRef('');
+ const mergeBlockedRef=useRef(false),mergeOperationRef=useRef(null);
+ const [mergeOpen,setMergeOpen]=useState(false),[mergeBusy,setMergeBusy]=useState(false),
+       [mergePreview,setMergePreview]=useState(null),[mergeTheirs,setMergeTheirs]=useState(null),
+       [mergeChoices,setMergeChoices]=useState({}),[mergeError,setMergeError]=useState('');
  const eventCursorRef=useRef(0),syncedCursorRef=useRef(0),eventStreamRef=useRef(null),liveRef=useRef(false);
  const [liveConnected,setLiveConnected]=useState(false);
  const canEdit = !!entry && entry.role!=='viewer';
@@ -322,10 +329,10 @@ function NotebookEditor({id,user,back,logout}) {
  function editDoc(fn){setDoc(prev=>{const next=typeof fn==='function'?fn(prev):fn;latestDoc.current=next;return next});revisions.current++;dirtyRef.current=true;setRevision(revisions.current);setDirty(true)}
  function updateCell(index,patch){editDoc(d=>({...d,cells:d.cells.map((c,i)=>i===index?{...c,...patch}:c)}))}
  const fetchRuntime=useCallback(async()=>{try{setRuntime(await api(`/notebooks/${id}/runtime`))}catch{}},[id]);
- useEffect(()=>{let active=true; (async()=>{try{const n=await api(`/notebooks/${id}`);if(!active)return;setEntry(n);setDoc(normalize(n.document));latestDoc.current=normalize(n.document);setTitle(n.title);latestTitle.current=n.title;versions.current=n.version;eventCursorRef.current=n.event_cursor||0;syncedCursorRef.current=n.event_cursor||0;setRuntime(n.runtime||{mode:null,status:'stopped'});if(n.runtime?.status==='ready')connectChannels();setCaps(await api('/runtime/capabilities'));
+ useEffect(()=>{let active=true; (async()=>{try{const n=await api(`/notebooks/${id}`);if(!active)return;setEntry(n);setDoc(normalize(n.document));latestDoc.current=normalize(n.document);baselineRef.current={version:n.version,document:normalize(n.document)};baselineTitleRef.current=n.title;setTitle(n.title);latestTitle.current=n.title;versions.current=n.version;eventCursorRef.current=n.event_cursor||0;syncedCursorRef.current=n.event_cursor||0;setRuntime(n.runtime||{mode:null,status:'stopped'});if(n.runtime?.status==='ready')connectChannels();setCaps(await api('/runtime/capabilities'));
    if(n.folder_id){try{const folders=await api('/folders');const f=folders.find(x=>x.id===n.folder_id);if(active&&f)setFolderCrumb({id:f.id,name:f.name})}catch{}}
  }catch(e){if(active)setError(e.message)}})();return()=>{active=false;socket.current?.close()}},[id]);
- const save=useCallback(async()=>{if(!canEdit||savingRef.current||!dirty||!latestDoc.current)return;const at=revisions.current;const snapshot=latestDoc.current;const name=latestTitle.current; savingRef.current=true;setSaving('saving');try{const result=await api(`/notebooks/${id}`,{method:'PUT',body:JSON.stringify({document:snapshot,title:name,version:versions.current})});versions.current=result.version;if(revisions.current===at){dirtyRef.current=false;setDirty(false);setSaving('saved')}else{setSaving('unsaved')}}catch(e){setError(e.message);setSaving('error')}finally{savingRef.current=false;if(revisions.current!==at)setSaveTick(x=>x+1)}},[canEdit,dirty,id]);
+ const save=useCallback(async()=>{if(!canEdit||savingRef.current||!dirty||!latestDoc.current||mergeBlockedRef.current)return;const at=revisions.current;const snapshot=latestDoc.current;const name=latestTitle.current; savingRef.current=true;setSaving('saving');try{const result=await api(`/notebooks/${id}`,{method:'PUT',body:JSON.stringify({document:snapshot,title:name,version:versions.current})});versions.current=result.version;baselineRef.current={version:result.version,document:normalize(snapshot)};baselineTitleRef.current=name;if(revisions.current===at){dirtyRef.current=false;setDirty(false);setSaving('saved')}else{setSaving('unsaved')}}catch(e){if(e.status===409){mergeBlockedRef.current=true;setMergeChoices({});mergeOperationRef.current=null;setMergePreview(null);setMergeOpen(true);setNotice('Another collaborator saved changes. Resolve the draft before saving.');}else setError(e.message);setSaving('error')}finally{savingRef.current=false;if(revisions.current!==at&&!mergeBlockedRef.current)setSaveTick(x=>x+1)}},[canEdit,dirty,id]);
  useEffect(()=>{if(!dirty||!canEdit)return;const t=setTimeout(save,1100);return()=>clearTimeout(t)},[revision,saveTick,dirty,save,canEdit]);
  // Version-only polling: no large document transfer on unchanged revisions.
  // Never replace unsaved or in-flight browser edits with an external MCP write.
@@ -347,7 +354,7 @@ function NotebookEditor({id,user,back,logout}) {
            const current=await api(`/notebooks/${id}`);
            if(!closed&&current.version>versions.current&&!dirtyRef.current&&!savingRef.current){
              const newDoc=normalize(current.document);
-             versions.current=current.version;
+             versions.current=current.version;baselineRef.current={version:current.version,document:newDoc};baselineTitleRef.current=current.title;
              latestDoc.current=newDoc;setDoc(newDoc);
              latestTitle.current=current.title;setTitle(current.title);
              setEntry(current);
@@ -376,7 +383,7 @@ function NotebookEditor({id,user,back,logout}) {
      const n=await api(`/notebooks/${id}`);
      if(closed||dirtyRef.current||savingRef.current||n.version<versions.current)return;
      const next=normalize(n.document);
-     versions.current=n.version;
+     versions.current=n.version;baselineRef.current={version:n.version,document:next};baselineTitleRef.current=n.title;
      eventCursorRef.current=Math.max(eventCursorRef.current,n.event_cursor||0);
      syncedCursorRef.current=Math.max(syncedCursorRef.current,n.event_cursor||0);
      latestDoc.current=next;setDoc(next);latestTitle.current=n.title;setTitle(n.title);
@@ -396,6 +403,8 @@ function NotebookEditor({id,user,back,logout}) {
      const updated=applyNotebookDelta(latestDoc.current,payload,versions.current,version);
      if(!updated)return reloadLatest();
      latestDoc.current=updated;setDoc(updated);versions.current=version;
+     baselineRef.current={version,document:updated};
+     if(typeof payload.title==='string'){baselineTitleRef.current=payload.title;}
      if(typeof payload.title==='string'){latestTitle.current=payload.title;setTitle(payload.title);}
      setEntry(previous=>previous?{...previous,version,title:payload.title||previous.title}:previous);
      lastExternalVersion.current=0;
@@ -487,6 +496,62 @@ function NotebookEditor({id,user,back,logout}) {
      setHasOlderHistory(older.length===100&&older[older.length-1].version>1);
    }catch(e){setError(e.message)}finally{setHistoryLoading(false)}
  }
+ async function inspectMerge(choices=mergeChoices){
+   const baseline=baselineRef.current;
+   if(!baseline||!latestDoc.current)return;
+   setMergeBusy(true);setMergeError('');
+   try{
+     const [plan,current]=await Promise.all([
+       api(`/notebooks/${id}/merge/preview`,{method:'POST',
+         body:JSON.stringify({base_version:baseline.version,mine_document:latestDoc.current,
+                               mine_title:latestTitle.current,resolutions:choices})}),
+       api(`/notebooks/${id}`)
+     ]);
+     setMergePreview(plan);setMergeTheirs(current);
+     if(mergeOperationRef.current?.latest_version!==plan.latest_version)
+       mergeOperationRef.current=null;
+   }catch(e){setMergeError(e.message)}
+   finally{setMergeBusy(false)}
+ }
+ async function commitResolvedMerge(){
+   if(!mergePreview?.can_merge||!baselineRef.current||!latestDoc.current)return;
+   setMergeBusy(true);setMergeError('');
+   const baseline=baselineRef.current;
+   const original=mergeOperationRef.current;
+   const operation=(original?.latest_version===mergePreview.latest_version&&
+                    original?.revision===revisions.current&&
+                    JSON.stringify(original.choices)===JSON.stringify(mergeChoices))
+     ?original:{id:randomId(),latest_version:mergePreview.latest_version,
+                revision:revisions.current,choices:{...mergeChoices}};
+   mergeOperationRef.current=operation;
+   try{
+     const updated=await api(`/notebooks/${id}/merge/commit`,{method:'POST',
+       body:JSON.stringify({base_version:baseline.version,
+         expected_latest_version:operation.latest_version,operation_id:operation.id,
+         mine_title:latestTitle.current,mine_document:latestDoc.current,
+         resolutions:operation.choices})});
+     const normalized=normalize(updated.document);
+     latestDoc.current=normalized;setDoc(normalized);
+     latestTitle.current=updated.title;setTitle(updated.title);
+     versions.current=updated.version;
+     baselineRef.current={version:updated.version,document:normalized};
+     baselineTitleRef.current=updated.title;
+     dirtyRef.current=false;setDirty(false);setSaving('saved');
+     mergeBlockedRef.current=false;mergeOperationRef.current=null;
+     setMergeOpen(false);setMergePreview(null);setMergeChoices({});
+     setNotice('Collaboration conflict resolved and saved as version '+updated.version);
+   }catch(e){
+     if(e.status===409){
+       setMergePreview(null);mergeOperationRef.current=null;
+       setMergeError('Another edit arrived or a conflict remains. Refresh the preview; your draft is preserved.');
+     }else{setMergeError(e.message)}
+   }finally{setMergeBusy(false)}
+ }
+ function conflictCellSummary(doc, key){
+   if(!key?.startsWith('cell:'))return '';
+   const cell=doc?.cells?.find(c=>c.id===key.slice(5));
+   return cell?sourceText(cell.source).slice(0,260):'[Cell deleted]';
+ }
  async function forkVersion(){
    if(!selectedVersion||forking)return;
    setForking(true);
@@ -501,11 +566,44 @@ function NotebookEditor({id,user,back,logout}) {
  if(!entry||!doc)return <div className="editor-loading"><NotebookPen size={28}/>{error||'Loading notebook...' }<button className="btn" onClick={back}>Back</button></div>;
  return <div className="editor-shell"><header className="editor-header"><div className="header-brand"><button className="logo compact" onClick={back} title="Back to notebooks"><NotebookPen size={19}/></button><div><input className="title-input" value={title} disabled={!canEdit} onChange={e=>changeTitle(e.target.value)} aria-label="Notebook title"/><div className="subtitle-small"><span className="bread" onClick={back}>My notebooks</span> / {folderCrumb?<><span className="bread" onClick={()=>{location.href='/folder/'+folderCrumb.id}}>{folderCrumb.name}</span> / </>:null}Python 3 <span className="bullet">·</span> <span className="save-state">{saving==='saving'?'Saving...':dirty?'Unsaved changes':'All changes saved'} <span aria-label={liveConnected?'Live collaboration connected':'Live collaboration reconnecting'} title={liveConnected?'Live events connected':'Using polling fallback'}>· {liveConnected?'Live':'Sync'}</span></span></div></div></div><div className="head-buttons"><HeaderButton disabled={!canEdit} onClick={save} title="Save"><Save size={16}/> Save</HeaderButton><HeaderButton onClick={exportNb}><Download size={16}/> Export</HeaderButton><HeaderButton onClick={openHistory} title="Browse saved versions or fork a private copy"><BookOpen size={16}/> History / Fork</HeaderButton>{canEdit&&<HeaderButton onClick={()=>setFilesOpen(true)}><FileText size={16}/> Files</HeaderButton>}{entry.role==='owner'&&<HeaderButton onClick={()=>setSharing(true)}><Users size={16}/> Share</HeaderButton>}<button className="avatar top-avatar" title={user.email} onClick={logout}>{user.email[0].toUpperCase()}</button></div></header>
  <div className="editor-toolbar"><div className="toolbar-main"><HeaderButton className="toolbar-primary" disabled={!canEdit} onClick={()=>add(doc.cells.length,'code')}><Plus size={16}/> Code</HeaderButton><HeaderButton disabled={!canEdit} onClick={()=>add(doc.cells.length,'markdown')}><FileText size={16}/> Text</HeaderButton><div className="sep"/><HeaderButton disabled={!canEdit||runtime.status!=='ready'||!channelReady} onClick={runAll}><Play size={16}/> Run all</HeaderButton><HeaderButton disabled={!canEdit||runtime.status!=='ready'} onClick={interrupt}><Square size={15}/> Interrupt</HeaderButton><span className="role-pill"><Shield size={14}/>{entry.role}</span></div><div className="runtime-controls"><span className={'runtime-indicator '+runtime.status}><span/>{runtime.status==='ready'?'Connected':runtime.status==='stopped'?'Disconnected':runtime.status}</span>{runtime.status==='ready'?<><span className="runtime-mode"><Cpu size={15}/> {runtime.mode?.toUpperCase()} {channelReady?"· Kernel ready":"· Kernel disconnected"}</span>{!channelReady&&<HeaderButton onClick={connectChannels}>Reconnect</HeaderButton>}<HeaderButton onClick={stop} disabled={!canEdit||busy}><CircleStop size={16}/> Disconnect</HeaderButton></>:<><select value={choice} onChange={e=>setChoice(e.target.value)} disabled={!canEdit||busy}><option value="cpu">CPU</option>{caps?.gpu_selectable&&<option value="gpu">GPU · {caps.gpu.name?.slice(0,23)}</option>}</select><HeaderButton className="primary" onClick={start} disabled={!canEdit||busy||!caps?.cpu}>{busy?'Connecting...':'Connect'} <Zap size={16}/></HeaderButton></>}</div></div>
- <div className="editor-layout"><main className="cells-panel"><div className="notebook-intro"><small className="eyebrow">INTERACTIVE NOTEBOOK</small><h1>{title}</h1><p>{canEdit?'Write code, explore results, and keep your research in one place.':'Read-only notebook. Contact the owner for editor permission.'}</p></div>{error&&<div className="alert"><AlertCircle size={16}/>{error}<button onClick={()=>setError('')}>×</button></div>}{notice&&<div className="notice"><Check size={15}/>{notice}<button onClick={()=>setNotice('')}>×</button></div>}
+ <div className="editor-layout"><main className="cells-panel"><div className="notebook-intro"><small className="eyebrow">INTERACTIVE NOTEBOOK</small><h1>{title}</h1><p>{canEdit?'Write code, explore results, and keep your research in one place.':'Read-only notebook. Contact the owner for editor permission.'}</p></div>{error&&<div className="alert"><AlertCircle size={16}/>{error}<button onClick={()=>setError('')}>×</button></div>}{notice&&<div className="notice"><Check size={15}/>{notice}{mergeBlockedRef.current&&<button className="btn" onClick={()=>{setMergeOpen(true);inspectMerge()}}>Resolve changes</button>}<button onClick={()=>setNotice('')}>×</button></div>}
  {doc.cells.map((cell,i)=><EditorCell key={cell.id} cell={cell} index={i} canEdit={canEdit} update={updateCell} run={run} remove={remove} move={move} add={add} running={!!runningIds[cell.id]}/>)}
  {canEdit&&<div className="end-cell-actions"><HeaderButton onClick={()=>add(doc.cells.length,'code')}><Plus size={16}/> Code cell</HeaderButton><HeaderButton onClick={()=>add(doc.cells.length,'markdown')}><Plus size={16}/> Text cell</HeaderButton></div>}
  <div className="notebook-end">End of notebook <span>·</span> {doc.cells.length} cells</div></main>
  <aside className="details-panel"><div className="details-header"><Activity size={17}/> Environment</div><div className="detail-row"><span>Language</span><strong>Python 3</strong></div><div className="detail-row"><span>Status</span><strong>{runtime.status}</strong></div><div className="detail-row"><span>Compute</span><strong>{runtime.mode?.toUpperCase()||'None'}</strong></div><div className="detail-row"><span>Autosave</span><strong>Enabled</strong></div><div className="detail-row"><span>Cells</span><strong>{doc.cells.length}</strong></div><div className="detail-divider"/><div className="details-header"><Cpu size={17}/> GPU availability</div>{caps?.gpu_selectable?<div className="gpu-good"><Check size={15}/> {caps.gpu.name}</div>:<div className="gpu-off"><AlertCircle size={15}/> GPU not available<div className="gpu-hint">{caps?.gpu?.reason || 'Probing local runtime...'}</div></div>}{!caps?.cpu&&<div className="gpu-off">CPU image missing — build the runtime image first.</div>}<button className="small-link refresh" onClick={async()=>{try{const c=await api('/runtime/capabilities?refresh=true');setCaps(c)}catch(e){setError(e.message)}}}><RefreshCcw size={14}/> Refresh status</button><div className="detail-divider"/><div className="details-header"><Shield size={17}/> Permissions</div><p className="detail-help">{entry.role==='owner'?'You own this notebook and can manage sharing.':entry.role==='editor'?'You can edit and execute cells.':'You can view saved content only.'}</p>{entry.role==='owner'&&<HeaderButton className="danger small" onClick={deleteNb}><Trash2 size={15}/> Delete notebook</HeaderButton>}</aside></div>
+ {mergeOpen&&<Modal title="Resolve shared Notebook changes" onClose={()=>setMergeOpen(false)}>
+   <div className="modal-body">
+     <p className="muted">Your unsaved draft is preserved. Nebula compares its original saved version, your edits, and the latest shared Notebook. No conflict is automatically overwritten.</p>
+     <p>Base <strong>v{baselineRef.current?.version}</strong> · Latest <strong>v{mergePreview?.latest_version??'?'}</strong></p>
+     <HeaderButton onClick={()=>{mergeOperationRef.current=null;inspectMerge()}} disabled={mergeBusy}>{mergeBusy?'Checking...':'Preview latest changes'}</HeaderButton>
+     {mergePreview&&<>
+       {mergePreview.conflicts.length===0&&<p className="notice">No overlapping changes detected. The independent edits can be merged.</p>}
+       {mergePreview.conflicts.map(conflict=><div key={conflict.key} className="merge-conflict">
+         <strong>{conflict.key}</strong><p className="muted">{conflict.message}</p>
+         {conflict.type==='cell'&&<div className="merge-versions">
+           <div><small>BASE</small><pre>{conflictCellSummary(baselineRef.current?.document,conflict.key)}</pre></div>
+           <div><small>MINE</small><pre>{conflictCellSummary(latestDoc.current,conflict.key)}</pre></div>
+           <div><small>LATEST</small><pre>{conflictCellSummary(normalize(mergeTheirs?.document||{cells:[]}),conflict.key)}</pre></div>
+         </div>}
+         <label>Resolve this conflict
+           <select value={mergeChoices[conflict.key]||''} onChange={e=>{
+             setMergeChoices(prev=>({...prev,[conflict.key]:e.target.value}));
+             setMergePreview(null);mergeOperationRef.current=null;
+           }}>
+             <option value="">Choose explicitly</option><option value="mine">Keep my change</option><option value="theirs">Keep latest shared change</option>
+           </select>
+         </label>
+       </div>)}
+       {mergePreview.conflicts.length>0&&<p className="muted">Choose a side for each conflict, then preview again to confirm the merged result.</p>}
+     </>}
+     {mergeError&&<div className="alert"><AlertCircle size={15}/>{mergeError}</div>}
+     <div className="modal-actions">
+       <HeaderButton onClick={()=>setMergeOpen(false)}>Keep editing draft</HeaderButton>
+       <HeaderButton className="primary" disabled={mergeBusy||!mergePreview?.can_merge}
+         onClick={commitResolvedMerge}>Commit merged version</HeaderButton>
+     </div>
+   </div>
+ </Modal>}
  {historyOpen&&<Modal title="Saved versions & private fork" onClose={()=>setHistoryOpen(false)}><div className="modal-body">
    <p className="muted">Saved versions are immutable. Forking creates your own independent Notebook and does not copy runtime variables, workspace files, or collaborators.</p>
    <label>Version to fork<select value={selectedVersion} onChange={e=>setSelectedVersion(e.target.value)}>
