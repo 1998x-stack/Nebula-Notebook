@@ -11,8 +11,8 @@ import time
 from typing import AsyncIterator
 
 from fastapi import HTTPException, Request
-from sqlalchemy import func, select
-from .db import NotebookEvent, SessionLocal
+from sqlalchemy import delete, func, select
+from .db import NotebookEvent, EventRetention, SessionLocal, utcnow
 from .security import resolve_identity, require_notebook
 
 MAX_DELTA_BYTES = 48_000
@@ -81,9 +81,53 @@ async def emit_run(run_id: str, kind: str, payload: dict | None = None):
         await db.commit()
 
 
+async def retention_floor(db, notebook_id: str) -> int:
+    state = await db.get(EventRetention, notebook_id)
+    return int(state.pruned_through_id) if state else 0
+
+
 async def cursor(db, notebook_id: str) -> int:
-    return int(await db.scalar(select(func.max(NotebookEvent.id)).where(
+    newest = int(await db.scalar(select(func.max(NotebookEvent.id)).where(
         NotebookEvent.notebook_id == notebook_id)) or 0)
+    return max(newest, await retention_floor(db, notebook_id))
+
+
+async def compact_events(db, notebook_id: str, *, keep: int = 100,
+                         apply: bool = False) -> dict:
+    """Admin-maintenance-only prune, *never* automatic on application startup.
+
+    Keep at least one newest event for each notebook and store the greatest
+    removed ID as a durable floor. The floor makes old Last-Event-ID cursors
+    explicitly recoverable instead of silently losing data.
+    """
+    if not 1 <= keep <= 100_000:
+        raise ValueError('keep must be between 1 and 100000')
+    cutoff = await db.scalar(select(NotebookEvent.id).where(
+        NotebookEvent.notebook_id == notebook_id)
+        .order_by(NotebookEvent.id.desc()).offset(keep).limit(1))
+    count = int(await db.scalar(select(func.count(NotebookEvent.id)).where(
+        NotebookEvent.notebook_id == notebook_id)) or 0)
+    floor = await retention_floor(db, notebook_id)
+    if cutoff is None:
+        return {'notebook_id': notebook_id, 'before': count, 'removed': 0,
+                'floor': floor, 'dry_run': not apply}
+    # Everything up to the (keep+1)th newest event is removed. Concurrent
+    # appending only produces higher IDs; maintenance requires stopped API.
+    removable = int(await db.scalar(select(func.count(NotebookEvent.id)).where(
+        NotebookEvent.notebook_id == notebook_id, NotebookEvent.id <= cutoff)) or 0)
+    if apply:
+        await db.execute(delete(NotebookEvent).where(
+            NotebookEvent.notebook_id == notebook_id, NotebookEvent.id <= cutoff))
+        record = await db.get(EventRetention, notebook_id)
+        if record:
+            record.pruned_through_id = max(record.pruned_through_id, cutoff)
+            record.updated_at = utcnow()
+        else:
+            db.add(EventRetention(notebook_id=notebook_id,
+                                  pruned_through_id=cutoff, updated_at=utcnow()))
+        await db.commit()
+    return {'notebook_id': notebook_id, 'before': count, 'removed': removable,
+            'floor': max(floor,cutoff) if apply else floor, 'dry_run': not apply}
 
 
 def event_payload(event: NotebookEvent) -> dict:
@@ -114,9 +158,27 @@ async def notebook_stream(request: Request, notebook_id: str, after: int) -> Asy
             except HTTPException:
                 yield 'event: access_revoked\ndata: {}\n\n'
                 return
-            rows = (await db.scalars(select(NotebookEvent).where(
-                NotebookEvent.notebook_id == notebook_id, NotebookEvent.id > position)
-                .order_by(NotebookEvent.id).limit(MAX_EVENTS_PER_QUERY))).all()
+            floor = await retention_floor(db, notebook_id)
+            newest = await cursor(db, notebook_id)
+            reset_reason = (
+                'pruned' if position < floor
+                else 'invalid_future_cursor' if position > newest else None)
+            if reset_reason:
+                # Resync never invents missing events: the client fetches the
+                # canonical Notebook, then retains its draft if locally dirty.
+                # From a prune floor, replay all retained events in order.
+                position = floor if reset_reason == 'pruned' else newest
+                rows = []
+            else:
+                rows = (await db.scalars(select(NotebookEvent).where(
+                    NotebookEvent.notebook_id == notebook_id, NotebookEvent.id > position)
+                    .order_by(NotebookEvent.id).limit(MAX_EVENTS_PER_QUERY))).all()
+        if reset_reason:
+            yield ('event: stream_reset\\n'
+                   'data: ' + json.dumps({'reason': reset_reason, 'floor': floor,
+                                           'cursor': newest}) + '\\n\\n')
+            last_heartbeat = time.monotonic()
+            continue
         if rows:
             for entry in rows:
                 position = entry.id
