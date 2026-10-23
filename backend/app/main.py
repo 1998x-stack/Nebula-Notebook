@@ -478,6 +478,8 @@ async def research_close(notebook_id: str, experiment_id: str,
     e = await get_experiment(db, notebook_id, experiment_id)
     if actor.id != e.actor_id and role != 'owner':
         raise HTTPException(403, 'Only experiment creator or Notebook owner may close')
+    if e.status == 'closed':
+        return public_experiment(e)
     e.status = 'closed'
     append_event(db, notebook_id, 'research.closed', actor_id=actor.id,
                  payload={'experiment_id': e.id})
