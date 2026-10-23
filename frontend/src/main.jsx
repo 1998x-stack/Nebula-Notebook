@@ -4,10 +4,19 @@ import CodeMirror from '@uiw/react-codemirror';
 import {python} from '@codemirror/lang-python';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+import 'katex/dist/katex.min.css';
 import DOMPurify from 'dompurify';
 import { BookOpen, Plus, Play, Square, RefreshCcw, Save, Download, Upload, Trash2, ChevronUp, ChevronDown, Code2, FileText, Cpu, LogOut, Users, Shield, X, Settings2, RotateCcw, CircleHelp, Activity, Check, AlertCircle, NotebookPen, Eye, Pencil, CircleStop, Zap, Search, Copy } from 'lucide-react';
 import './style.css';
 
+// Markdown rendering: GFM tables/lists + KaTeX math ($...$ inline, $$...$$ display).
+// strict:'ignore' keeps KaTeX from throwing on unicode inside math (e.g. \text{中文}),
+// and throwOnError:false + errorColor means a broken formula degrades to red source text
+// instead of breaking the whole cell.
+const katexOptions = {throwOnError:false, strict:'ignore', errorColor:'#e06c75', trust:false};
+const mdPlugins = {remarkPlugins:[remarkGfm, remarkMath], rehypePlugins:[[rehypeKatex, katexOptions]]};
 const pyExtensions = [python()];
 const randomId = () => { if (globalThis.crypto?.randomUUID) return crypto.randomUUID().replaceAll('-', '').slice(0, 20); const bytes = new Uint8Array(10); crypto.getRandomValues(bytes); return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join(''); };
 let csrfToken = '';
@@ -88,7 +97,7 @@ function EditorCell({cell, index, canEdit, update, run, remove, move, add, runni
  const [markdownEdit,setMarkdownEdit]=useState(!cell.source);
  return <div className={'cell '+(running?'cell-running':'')} id={'cell-'+cell.id}><div className="cell-toolbar"><div className="cell-type"><span className={'cell-dot '+cell.cell_type}/>{cell.cell_type==='code'?'Python':'Markdown'} <span className="execution-count">{cell.execution_count==null?'':`[${cell.execution_count}]`}</span></div><div className="cell-controls">{canEdit&&<><button title="Move up" onClick={()=>move(index,-1)}><ChevronUp size={15}/></button><button title="Move down" onClick={()=>move(index,1)}><ChevronDown size={15}/></button><button title="Insert below" onClick={()=>add(index+1,cell.cell_type)}><Plus size={15}/></button><button title="Delete cell" onClick={()=>remove(index)}><Trash2 size={15}/></button></>}</div></div>
  <div className="cell-content">{cell.cell_type==='code'?<div className="code-area"><div className="run-gutter"><button aria-label="Run cell" title="Run cell" className="run-cell" disabled={!canEdit||running} onClick={()=>run(cell)}><Play size={17} fill="currentColor"/></button></div><CodeMirror value={sourceText(cell.source)} readOnly={!canEdit} editable={canEdit} onChange={v=>update(index,{source:v})} extensions={pyExtensions} theme="dark" basicSetup={{foldGutter:false,highlightActiveLine:true,highlightActiveLineGutter:false}}/></div>:
- <div className="markdown-area">{canEdit&&markdownEdit?<textarea rows={Math.max(3,sourceText(cell.source).split('\n').length+1)} value={sourceText(cell.source)} onChange={e=>update(index,{source:e.target.value})} onBlur={()=>setMarkdownEdit(false)} placeholder="Write Markdown here..."/>:<div className="markdown-preview" onDoubleClick={()=>canEdit&&setMarkdownEdit(true)}><ReactMarkdown remarkPlugins={[remarkGfm]}>{sourceText(cell.source)||'*Double-click to edit Markdown*'}</ReactMarkdown>{canEdit&&<button className="edit-markdown" onClick={()=>setMarkdownEdit(true)}><Pencil size={14}/> Edit</button>}</div>}</div>}
+ <div className="markdown-area">{canEdit&&markdownEdit?<textarea rows={Math.max(3,sourceText(cell.source).split('\n').length+1)} value={sourceText(cell.source)} onChange={e=>update(index,{source:e.target.value})} onBlur={()=>setMarkdownEdit(false)} placeholder="Write Markdown here..."/>:<div className="markdown-preview" onDoubleClick={()=>canEdit&&setMarkdownEdit(true)}><ReactMarkdown {...mdPlugins}>{sourceText(cell.source)||'*Double-click to edit Markdown*'}</ReactMarkdown>{canEdit&&<button className="edit-markdown" onClick={()=>setMarkdownEdit(true)}><Pencil size={14}/> Edit</button>}</div>}</div>}
  {cell.cell_type==='code'&&(cell.outputs||[]).length>0&&<div className="output-area">{cell.outputs.map((o,i)=><RichOutput output={o} key={i}/>)}</div>}
  </div></div>;
 }
