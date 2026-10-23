@@ -835,7 +835,8 @@ class NebulaClient:
         if cell.get("cell_type") != "code":
             raise NebulaError("Only code cells can be executed")
         cid = cell["id"]
-        result = await self.execute(notebook_id, text(cell.get("source")), timeout)
+        executed_source = text(cell.get("source"))
+        result = await self.execute(notebook_id, executed_source, timeout)
         response = {
             "notebook_id": notebook_id,
             "cell_id": cid,
@@ -849,6 +850,8 @@ class NebulaClient:
         if persist:
             def apply(doc: dict, _nb: dict) -> None:
                 _, target = self._cell(doc, cid)
+                if text(target.get("source")) != executed_source or target.get("cell_type") != "code":
+                    raise Conflict("Cell source changed during execution; stale output was not saved")
                 target["outputs"] = result["outputs"]
                 target["execution_count"] = result["execution_count"]
             _, version = await self.mutate(notebook_id, apply)
@@ -875,18 +878,20 @@ class NebulaClient:
                 "timed_out": result["timed_out"],
                 "outputs": summarize_outputs(result["outputs"], include_data=include_data),
             }
-            results.append((item, cid, result))
-            if stop_on_error and result["status"] not in ("ok", "timeout"):
+            results.append((item, cid, result, text(cell.get("source"))))
+            if stop_on_error and result["status"] != "ok":
                 break
         saved_version = None
         if persist:
             for _ in range(5):
                 current = await self.get_notebook(notebook_id)
-                for item, cid, result in results:
+                for item, cid, result, source in results:
                     try:
                         _, target = self._cell(current["document"], cid)
-                    except NebulaError:
-                        continue
+                    except NebulaError as exc:
+                        raise Conflict("Cell removed during run-all; outputs were not saved") from exc
+                    if text(target.get("source")) != source or target.get("cell_type") != "code":
+                        raise Conflict("Cell source changed during run-all; stale output was not saved")
                     target["outputs"] = result["outputs"]
                     target["execution_count"] = result["execution_count"]
                 try:
@@ -900,7 +905,7 @@ class NebulaClient:
                 raise Conflict("Notebook changed repeatedly while saving run-all outputs")
         return {
             "notebook_id": notebook_id,
-            "cells": [item for item, _cid, _res in results],
+            "cells": [item for item, _cid, _res, _src in results],
             "saved_version": saved_version,
         }
 
@@ -946,6 +951,10 @@ class NebulaClient:
 
         Outputs are persisted for the whole window in a single notebook save.
         """
+        if not isinstance(start, int) or start < 0:
+            raise NebulaError("start must be a non-negative code-cell offset")
+        if count is not None and (not isinstance(count, int) or count < 1):
+            raise NebulaError("count must be a positive integer so the cursor advances")
         nb = await self.get_notebook(notebook_id)
         cells = nb["document"].get("cells", [])
         code_cells = [(i, c) for i, c in enumerate(cells) if c.get("cell_type") == "code"]
@@ -968,8 +977,9 @@ class NebulaClient:
                 "outputs": summarize_outputs(result["outputs"], include_data=include_data),
                 "_raw": result["outputs"],
                 "_exec": result["execution_count"],
+                "_source": text(cell.get("source")),
             })
-            if stop_on_error and result["status"] not in ("ok", "timeout"):
+            if stop_on_error and result["status"] != "ok":
                 break
 
         saved_version = None
@@ -979,10 +989,12 @@ class NebulaClient:
                 for item in results:
                     try:
                         _, target = self._cell(current["document"], item["cell_id"])
-                    except NebulaError:
-                        continue
-                    target["outputs"] = item.pop("_raw")
-                    target["execution_count"] = item.pop("_exec")
+                    except NebulaError as exc:
+                        raise Conflict("Cell removed during run window; outputs were not saved") from exc
+                    if text(target.get("source")) != item["_source"] or target.get("cell_type") != "code":
+                        raise Conflict("Cell source changed during run window; stale output was not saved")
+                    target["outputs"] = item["_raw"]
+                    target["execution_count"] = item["_exec"]
                 try:
                     saved = await self.save_notebook(
                         notebook_id, current["title"], current["version"], current["document"])
@@ -993,12 +1005,13 @@ class NebulaClient:
             for item in results:
                 item.pop("_raw", None)
                 item.pop("_exec", None)
+                item.pop("_source", None)
             if saved_version is None:
                 raise Conflict("Notebook changed repeatedly while saving run window")
 
         ran_to = results[-1]["code_ordinal"] + 1 if results else begin
         interrupted = bool(stop_on_error and results
-                           and results[-1]["status"] not in ("ok", "timeout"))
+                           and results[-1]["status"] != "ok")
         return {
             "notebook_id": notebook_id,
             "total_code_cells": total,

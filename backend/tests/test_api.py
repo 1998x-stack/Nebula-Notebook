@@ -17,10 +17,13 @@ async def test_login_notebooks_and_version_conflict(clients):
     assert created.status_code == 200, created.text
     doc = created.json(); notebook_id = doc['id']
     assert doc['role'] == 'owner' and doc['version'] == 1
+    revision = await clients.get(f'/api/notebooks/{notebook_id}/revision')
+    assert revision.status_code == 200 and revision.json()['version'] == 1
     assert (await clients.get('/api/notebooks')).json()[0]['id'] == notebook_id
     assert (await clients.put(f'/api/notebooks/{notebook_id}',json={'title':'Updated','version':1,'document':doc['document']})).status_code == 403
     saved = await clients.put(f'/api/notebooks/{notebook_id}',headers=headers,json={'title':'Updated','version':1,'document':doc['document']})
     assert saved.status_code == 200 and saved.json()['version'] == 2
+    assert (await clients.get(f'/api/notebooks/{notebook_id}/revision')).json()['version'] == 2
     conflict = await clients.put(f'/api/notebooks/{notebook_id}',headers=headers,json={'title':'Old','version':1,'document':doc['document']})
     assert conflict.status_code == 409
     assert (await clients.get(f'/api/notebooks/{notebook_id}/export')).status_code == 200

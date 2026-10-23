@@ -160,10 +160,15 @@ env = { NEBULA_URL = "http://127.0.0.1:8000", NEBULA_MCP_FS_ROOT = "/path/to/you
 | `notebook_run_cells` | **分批/可续跑**运行一段 code cell 窗口（`start`/`count` → `next_start`），长 notebook 不会撞客户端超时 |
 | `code_execute` | 不建 cell 直接执行代码；变量在 kernel 中保留；可 `persist=true` 追加为 cell |
 
+### Kernel 变量与执行观察
+
+`kernel_variables(notebook_id, names=null, limit=80)` 读取**已连接 Python Kernel**的变量元数据（名称、类型、部分 shape/dtype/device 和少量标量预览），不会自动启动 Runtime，也不会保存 Cell。它是 **EXECUTE** 类工具，因为通过 Kernel 执行固定检查代码；只读 MCP 模式禁用它。请勿用它获取机密数据。R/C++ kernel 暂不支持这一 Python 专用工具。
+
 ### Runtime / workspace / 权限
 
 | Tool | 作用 |
 |---|---|
+| `kernel_variables` | Inspect bounded live Python variable metadata (requires running Kernel; executes a fixed probe) |
 | `runtime_start` / `runtime_stop` / `runtime_status` | 管理 CPU/GPU runtime |
 | `runtime_diagnose` | **内核侧环境体检**：包版本、matplotlib 后端与 inline 依赖、CJK 字体、`/workspace` 真实目录树、env |
 | `runtime_quota` | 列出每个 notebook 是否正持有 runtime（429 配额排查用） |
@@ -235,6 +240,8 @@ MCP resources（支持 resources 的客户端可浏览）：
 | `NEBULA_MCP_LOG_LEVEL` | `WARNING` | 日志写 stderr，不污染 MCP stdout |
 | `NEBULA_PIP_INDEX_URL` | 空 | `run.sh` 首次安装依赖时可用的镜像 |
 
+注意：`runtime_diagnose`、`workspace_read`、`workspace_list(recursive=true)` 会在 Kernel 中执行 Python，不能当成无副作用的只读操作；`NEBULA_MCP_READONLY` 模式下这些操作受限。
+
 ## 7. 安全模型
 
 - MCP server 是一个**本地可信进程**，持有 Nebula 会话 cookie。stdio 只在本机客户端与 server 之间。
@@ -273,7 +280,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 
 <!-- BEGIN GENERATED TOOL REFERENCE -->
 
-共 **46 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
+共 **47 个工具**（由 `mcp/gen_tool_reference.py` 从 `server.py` 生成，请勿手改）。
 
 ### 健康检查与能力
 
@@ -322,6 +329,7 @@ mcp/.venv/bin/python mcp/test_mcp.py
 | Tool | 参数 | 默认 |
 |---|---|---|
 | `kernel_interrupt` | `notebook_id:str` |  |
+| `kernel_variables` | `notebook_id:str`, `names:list[str] | None`, `limit:int`, `timeout:float` | `names` = `null`<br>`limit` = `80`<br>`timeout` = `20` |
 | `runtime_diagnose` | `notebook_id:str`, `timeout:float` | `timeout` = `60` |
 | `runtime_quota` | — |  |
 | `runtime_start` | `notebook_id:str`, `mode:Literal['cpu', 'gpu']` | `mode` = `'cpu'` |

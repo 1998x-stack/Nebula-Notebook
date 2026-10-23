@@ -1,0 +1,53 @@
+# Nebula Notebook × autoresearch — bounded MCP agent instruction
+# Copy into your trusted coding agent (Pi, Codex, Claude, OpenCode) with Nebula MCP connected.
+# Inspired by https://github.com/karpathy/autoresearch; this is an ADAPTATION, not its program.md.
+
+GOAL: Conduct a reproducible, measurable notebook experiment loop, using Nebula MCP to
+create and update notebook cells and inspect run outputs. Do not claim this is the
+upstream five-minute LLM benchmark until the original code/environment is reproduced.
+
+PRE-FLIGHT (ask before starting):
+1. Agree on objective, primary metric, direction (min/max), baseline, train/validation
+   split, resource/time budget, maximum iterations (default 5), and allowed file paths.
+2. Confirm what is immutable (datasets, evaluation, random seeds, environment,
+   metric computation). Never rewrite evaluation to make the metric look better.
+3. Check nebula_health, nebula_capabilities and runtime_quota. Choose CPU unless
+   verified GPU is essential and explicitly available. Do not assume a Mac MPS device
+   is available inside a Linux Docker container.
+4. Create one notebook "autoresearch — <run tag>" with Markdown cells containing
+   hypothesis, immutable configuration, the baseline and a results table.
+5. When adapting the original karpathy/autoresearch, keep prepare.py and its
+   evaluate_bpb untouched, train.py as the only experiment file; use its exact
+   evaluation protocol and fixed five-minute training budget on supported hardware.
+   Do not expect the base Nebula GPU container to include the entire upstream
+   autoresearch environment. Verify dependencies and a real GPU before any trial.
+
+MCP LOOP (maximum iterations as agreed; do not run unbounded):
+A. notebook_get -> record notebook version, stable cell IDs, and metric baseline.
+B. Write one small, testable hypothesis into a Markdown cell via cell_add.
+C. Make one controlled change in the experiment code using cell_update. Save a
+   content digest of the changed code and note dataset/environment identifiers.
+D. cell_run (or notebook_run_cells for a bounded window), then inspect the outputs.
+   If a call times out, treat it as UNKNOWN, check runtime_status and outputs;
+   do not automatically launch a duplicate long GPU job.
+E. kernel_variables(names=[...]) ONLY for specific nonsecret names when the Python
+   runtime is ready; inspect shape/dtype/device, not giant tensor contents.
+F. Record metric, elapsed time, machine/runtime mode, code digest, status,
+   error summary, and pass/fail versus baseline in a results table.
+G. Only mark an improvement as "keep" if the immutable evaluator succeeded
+   and the difference satisfies the agreed metric criterion. Otherwise mark "reject".
+H. Do not silently overwrite prior outputs or remove cells. Keep an immutable
+   trial record before changing the next experiment. Stop on repeated failures.
+
+EXPERIMENT TRACKING:
+trial_id | code_digest | hypothesis | seed | metric | duration_s | status | decision | notes
+
+REAL-TIME VIEW:
+Tell the user to open /notebook/<id>. Current Nebula persists MCP changes to the shared document; browser versions
+are polled (about 2.5s visible, 15s hidden). Outputs appear after successful
+save. True stream events/replay during execution are still planned.
+
+STOP WHEN: iteration budget met, GPU/memory quota exceeded, evaluation changed,
+results cannot be verified, or the user interrupts. Return an experiment summary:
+baseline, best validated metric, best code digest, rejected experiments and
+known limitations. Ask permission before any lengthy or costly new batch.
