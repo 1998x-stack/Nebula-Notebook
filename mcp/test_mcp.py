@@ -116,6 +116,10 @@ async def main() -> int:
                     "workspace_list", "workspace_upload", "workspace_download",
                     "workspace_delete", "share_list", "share_add", "share_remove",
                     "user_list", "user_create", "user_set_active", "audit_list",
+                    "notebook_run_cells", "runtime_diagnose", "runtime_quota",
+                    "workspace_write", "workspace_read",
+                    "folder_list", "folder_create", "folder_ensure",
+                    "folder_rename", "folder_delete", "notebook_move",
                 }
                 check("MCP tool catalog", required <= names, sorted(required - names))
                 check("MCP resources listed", "nebula://notebooks" in
@@ -230,6 +234,156 @@ async def main() -> int:
                     if "image/png" in (out.get("data_keys") or [])
                 ]
                 check("matplotlib image output saved", bool(plot_outputs), plot_outputs)
+
+                # ---- folders: grouping layer on the notebook list ----
+                fname = "mcp-test-folder"
+                for stale in await call(session, "folder_list"):
+                    if stale["name"].startswith(fname):
+                        await call(session, "folder_delete", {"folder_id": stale["id"]})
+
+                made = await call(session, "folder_create", {"name": fname})
+                check("folder_create returns id/name/count",
+                      made["name"] == fname and made["notebook_count"] == 0, made)
+                err = await expect_error(session, "folder_create", {"name": "  " + fname.upper() + " "})
+                check("folder_create rejects duplicate names (case/space insensitive)",
+                      "already exists" in err, err)
+                err = await expect_error(session, "folder_create", {"name": "   "})
+                check("folder_create rejects blank names", "visible character" in err, err)
+
+                again = await call(session, "folder_ensure", {"name": fname.upper()})
+                check("folder_ensure is idempotent (case-insensitive match)",
+                      again["id"] == made["id"] and again["created"] is False, again)
+
+                folder_id = made["id"]
+                filed = await call(session, "notebook_create", {
+                    "title": "filed notebook", "folder_id": folder_id,
+                    "cells": [{"type": "code", "source": "1 + 1"}],
+                })
+                created.append(filed["id"])
+                check("notebook_create files into a folder",
+                      filed.get("folder_id") == folder_id, filed)
+                err = await expect_error(session, "notebook_create", {
+                    "title": "orphan", "folder_id": "00000000-0000-0000-0000-000000000000"})
+                check("notebook_create rejects an unknown folder_id", "not found" in err.lower(), err)
+
+                listed = await call(session, "notebook_list", {"folder_id": folder_id})
+                check("notebook_list filters by folder",
+                      [n["id"] for n in listed] == [filed["id"]], listed)
+                root_list = await call(session, "notebook_list", {"folder_id": ""})
+                check("notebook_list(folder_id='') lists root only",
+                      all(n["folder_id"] is None for n in root_list), root_list[:2])
+
+                moved_back = await call(session, "notebook_move", {"notebook_id": filed["id"]})
+                check("notebook_move to null returns to the root",
+                      moved_back.get("folder_id") is None, moved_back)
+                moved_in = await call(session, "notebook_move", {
+                    "notebook_id": filed["id"], "folder_id": folder_id})
+                check("notebook_move into a folder", moved_in.get("folder_id") == folder_id, moved_in)
+
+                renamed_folder = await call(session, "folder_rename", {
+                    "folder_id": folder_id, "name": fname + "-renamed"})
+                check("folder_rename", renamed_folder["name"] == fname + "-renamed", renamed_folder)
+                counts = {f["id"]: f["notebook_count"] for f in await call(session, "folder_list")}
+                check("folder_list reports notebook_count", counts.get(folder_id) == 1, counts.get(folder_id))
+
+                emptied = await call(session, "folder_delete", {"folder_id": folder_id})
+                check("folder_delete keeps its notebooks (moves them to the root)",
+                      emptied.get("notebooks_moved_to_root") == 1, emptied)
+                still_there = await call(session, "notebook_get", {"notebook_id": filed["id"]})
+                check("notebook survived folder deletion",
+                      still_there["id"] == filed["id"] and still_there.get("folder_id") is None,
+                      still_there.get("folder_id"))
+
+                # create_notebook_file mirrors the local parent directory into a folder
+                mirrored = await call(session, "notebook_create_file", {
+                    "path": "mdir/mirror-me.ipynb",
+                    "cells": [{"type": "code", "source": "1"}],
+                })
+                created.append(mirrored["notebook_id"])
+                check("create_file mirrors the local dir into a folder",
+                      mirrored.get("folder", {}).get("name") == "mdir"
+                      and mirrored.get("folder", {}).get("created") is True, mirrored.get("folder"))
+                mirror_folders = {f["name"]: f["id"] for f in await call(session, "folder_list")}
+                if "mdir" in mirror_folders:
+                    await call(session, "folder_delete", {"folder_id": mirror_folders["mdir"]})
+
+                # ---- runtime diagnose / quota / nested workspace / run window ----
+                diag = await call(session, "runtime_diagnose", {"notebook_id": nb_id})
+                check("runtime_diagnose reports package versions",
+                      isinstance(diag.get("packages"), dict)
+                      and "sklearn" in diag["packages"], diag.get("packages"))
+                check("runtime_diagnose reports matplotlib backend",
+                      "matplotlib_backend" in diag, diag)
+                check("runtime_diagnose reports workspace tree",
+                      any(f["path"].endswith("plot.py") or f["path"] for f in diag["workspace_files"]) is not None,
+                      [f["path"] for f in diag.get("workspace_files", [])][:5])
+                check("runtime_diagnose cross-checks runtime status",
+                      diag.get("runtime_status") in ("ready", "starting"), diag.get("runtime_status"))
+
+                quota = await call(session, "runtime_quota")
+                check("runtime_quota lists visited notebooks with session flag",
+                      isinstance(quota, list)
+                      and all({"id", "status", "holds_session"} <= set(item) for item in quota),
+                      quota[:3])
+                check("runtime_quota flags the busy notebook",
+                      any(item["id"] == nb_id and item["holds_session"] for item in quota),
+                      [item for item in quota if item["id"] == nb_id])
+
+                nested_path = "tutorials/deep/nested.txt"
+                wrote = await call(session, "workspace_write", {
+                    "notebook_id": nb_id, "path": nested_path,
+                    "content": "nested payload\n",
+                })
+                check("workspace_write creates nested directories",
+                      wrote.get("path") == nested_path, wrote)
+
+                flat_files = await call(session, "workspace_list", {"notebook_id": nb_id})
+                check("flat listing stays root-only (matches the browser panel)",
+                      all("/" not in f["name"] for f in flat_files), flat_files)
+                deep_files = await call(session, "workspace_list",
+                                       {"notebook_id": nb_id, "recursive": True})
+                check("recursive listing reveals nested files",
+                      any(f["path"] == nested_path for f in deep_files), deep_files)
+                check("recursive listing reports depth",
+                      all("depth" in f and "source" in f for f in deep_files), deep_files[:2])
+                read_back = await call(session, "workspace_read", {
+                    "notebook_id": nb_id, "path": nested_path,
+                })
+                check("workspace_read round-trips nested file",
+                      read_back.get("text") == "nested payload\n", read_back)
+
+                for bad_path in ("/absolute.txt", "../escape.txt", "a/../../b.txt"):
+                    err = await expect_error(session, "workspace_write", {
+                        "notebook_id": nb_id, "path": bad_path, "content": "x",
+                    })
+                    check(f"workspace_write rejects {bad_path!r}", bool(err), err)
+                err = await expect_error(session, "workspace_write", {
+                    "notebook_id": nb_id, "path": "ok.txt",
+                })
+                check("workspace_write requires content or local_path", bool(err), err)
+                err = await expect_error(session, "workspace_upload", {
+                    "notebook_id": nb_id, "filename": "dir/file.txt", "content": "x",
+                })
+                check("workspace_upload still rejects slashes with a clear error",
+                      "simple" in err.lower() or "workspace_write" in err, err)
+
+                window = await call(session, "notebook_run_cells", {
+                    "notebook_id": nb_id, "start": 0, "count": 2, "timeout": 120,
+                })
+                check("notebook_run_cells runs a code-cell window",
+                      window.get("ran") == 2 and window.get("total_code_cells", 0) >= 2, window)
+                check("notebook_run_cells exposes resumable cursor",
+                      isinstance(window.get("next_start"), int) and window.get("done") is False,
+                      {k: window[k] for k in ("next_start", "done", "ran")})
+                check("notebook_run_cells persists a version",
+                      isinstance(window.get("saved_version"), int), window.get("saved_version"))
+                tail = await call(session, "notebook_run_cells", {
+                    "notebook_id": nb_id, "start": window["next_start"], "count": 99,
+                    "timeout": 120,
+                })
+                check("notebook_run_cells finishes the notebook", tail.get("done") is True, tail)
+                check("run window outputs were saved",
+                      all(c["status"] == "ok" for c in tail["cells"]), tail["cells"])
 
                 export_path = fs_root / "exported.ipynb"
                 exported = await call(session, "notebook_export", {

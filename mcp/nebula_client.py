@@ -7,8 +7,10 @@ same authentication, CSRF, RBAC and runtime rules as the browser UI.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import re
 import mimetypes
 import time
 from datetime import datetime, timezone
@@ -289,6 +291,175 @@ class KernelSession:
             }
 
 
+# --------------------------------------------------------------------------
+# Kernel-side snippets used by the "workspace beyond the flat API" helpers.
+#
+# Why these exist: the Nebula REST API deliberately accepts only simple
+# root-level filenames (SAFE_FILE) and its file listing ignores directories.
+# The kernel, however, has /workspace mounted read-write and can create nested
+# layouts. These snippets let MCP clients see and write the *real* workspace
+# instead of only the flat subset the REST API exposes.
+# --------------------------------------------------------------------------
+
+def _stdout_of(outputs: list[dict]) -> str:
+    return "".join(
+        text(o.get("text")) for o in outputs
+        if o.get("output_type") == "stream" and o.get("name") == "stdout"
+    )
+
+
+def _last_json(payload: str) -> Any:
+    """Return the last JSON object/array printed on its own line."""
+    for line in reversed(payload.strip().splitlines()):
+        line = line.strip()
+        if line[:1] in ("{", "["):
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
+_REL_SEGMENT = re.compile(r"^[^/\\\x00]{1,120}$")
+
+
+def normalize_workspace_path(path: str, *, max_depth: int = 8) -> str:
+    """Validate a relative /workspace path (no absolute paths, no '..')."""
+    raw = str(path or "").strip().replace("\\", "/")
+    if not raw:
+        raise NebulaError("path must not be empty")
+    if raw.startswith("/"):
+        raise NebulaError(
+            "path must be relative to /workspace (drop the leading '/'); "
+            "e.g. 'tutorials/01-intro.ipynb'"
+        )
+    parts = [seg for seg in raw.split("/") if seg not in ("", ".")]
+    if any(seg == ".." for seg in parts):
+        raise NebulaError("path must not contain '..'")
+    if not parts or len(parts) > max_depth:
+        raise NebulaError(f"path must have 1..{max_depth} segments")
+    for seg in parts:
+        if not _REL_SEGMENT.fullmatch(seg):
+            raise NebulaError(f"unsupported path segment: {seg!r}")
+    return "/".join(parts)
+
+
+_KERNEL_WALK = """
+import json, os
+root = "/workspace"
+files = []
+for base, dirs, names in os.walk(root):
+    dirs.sort()
+    for name in sorted(names):
+        full = os.path.join(base, name)
+        rel = os.path.relpath(full, root)
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            size = None
+        files.append({"path": rel.replace(os.sep, "/"), "size": size})
+files.sort(key=lambda item: item["path"])
+print(json.dumps({"root_entries": sorted(os.listdir(root)), "files": files}))
+"""
+
+_KERNEL_WRITE = """
+import base64, json, os, pathlib
+root = pathlib.Path("/workspace").resolve()
+target = (root / REL_PATH).resolve()
+if target != root and root not in target.parents:
+    raise ValueError("path escapes /workspace")
+target.parent.mkdir(parents=True, exist_ok=True)
+target.write_bytes(base64.b64decode(PAYLOAD_B64))
+print(json.dumps({"path": str(target.relative_to(root)), "size": target.stat().st_size}))
+"""
+
+_KERNEL_READ = """
+import base64, json, pathlib
+root = pathlib.Path("/workspace").resolve()
+target = (root / REL_PATH).resolve()
+if target != root and root not in target.parents:
+    raise ValueError("path escapes /workspace")
+if not target.is_file():
+    raise FileNotFoundError(str(target))
+print(json.dumps({"path": str(target.relative_to(root)), "b64": base64.b64encode(target.read_bytes()).decode("ascii")}))
+"""
+
+_KERNEL_DIAGNOSE = """
+import importlib, json, os, platform, sys
+
+report = {
+    "python": sys.version.split()[0],
+    "executable": sys.executable,
+    "platform": platform.platform(),
+    "cpu_count": os.cpu_count(),
+}
+packages = {}
+for name in ("numpy", "pandas", "scipy", "matplotlib", "sklearn", "joblib",
+             "threadpoolctl", "torch"):
+    try:
+        packages[name] = importlib.import_module(name).__version__
+    except Exception as exc:                     # noqa: BLE001 - report, never raise
+        packages[name] = f"NOT INSTALLED ({type(exc).__name__})"
+report["packages"] = packages
+
+try:
+    import matplotlib
+    from matplotlib import font_manager
+    report["matplotlib_backend"] = matplotlib.get_backend()
+    families = {f.name for f in font_manager.fontManager.ttflist}
+    report["cjk_fonts"] = sorted(
+        name for name in families
+        if any(tag in name for tag in ("CJK", "Noto Sans SC", "Source Han",
+                                       "WenQuanYi", "Heiti", "SimHei", "PingFang"))
+    )
+except Exception as exc:                          # noqa: BLE001
+    report["matplotlib_backend"] = f"ERROR: {exc}"
+    report["cjk_fonts"] = []
+
+backend = str(report.get("matplotlib_backend", "")).lower()
+report["matplotlib_inline_required"] = backend == "agg"
+report["warnings"] = []
+if report["matplotlib_inline_required"]:
+    report["warnings"].append(
+        "MPLBACKEND=Agg: plt.show() produces no image/png output unless the "
+        "notebook runs '%matplotlib inline' in a cell first."
+    )
+if not report["cjk_fonts"]:
+    report["warnings"].append(
+        "No CJK font found: Chinese labels in matplotlib figures render as "
+        "tofu boxes."
+    )
+missing = [n for n, v in packages.items() if str(v).startswith("NOT INSTALLED")]
+if missing:
+    report["warnings"].append(f"Missing packages in this runtime image: {missing}")
+
+report["env"] = {k: os.environ.get(k) for k in
+                 ("MPLBACKEND", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+                  "MKL_NUM_THREADS", "LOKY_MAX_CPU_COUNT", "PYTHONHASHSEED")}
+
+try:
+    import sklearn
+    report["sklearn_config"] = {k: str(v) for k, v in sklearn.get_config().items()}
+except Exception:                                 # noqa: BLE001
+    pass
+
+files = []
+for base, dirs, names in os.walk("/workspace"):
+    dirs.sort()
+    for name in sorted(names):
+        full = os.path.join(base, name)
+        rel = os.path.relpath(full, "/workspace")
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            size = None
+        files.append({"path": rel.replace(os.sep, "/"), "size": size})
+report["workspace_files"] = sorted(files, key=lambda item: item["path"])[:500]
+report["workspace_root_entries"] = sorted(os.listdir("/workspace"))
+print(json.dumps(report, ensure_ascii=False))
+"""
+
+
 class NebulaClient:
     def __init__(self, base_url: str, email: str, password: str, *, origin: str | None = None,
                  fs_root: str | Path | None = None, default_mode: str = "cpu",
@@ -398,14 +569,57 @@ class NebulaClient:
 
     # ---------- Notebook CRUD ----------
 
-    async def list_notebooks(self) -> list[dict]:
-        return await self._json("GET", "/api/notebooks")
+    async def list_notebooks(self, folder_id: str | None = None) -> list[dict]:
+        suffix = "" if folder_id is None else f"?folder_id={folder_id}"
+        return await self._json("GET", f"/api/notebooks{suffix}")
+
+    # ---------- Folders ----------
+
+    async def list_folders(self) -> list[dict]:
+        return await self._json("GET", "/api/folders")
+
+    async def create_folder(self, name: str) -> dict:
+        return await self._json("POST", "/api/folders", json={"name": name})
+
+    async def rename_folder(self, folder_id: str, name: str) -> dict:
+        return await self._json("PATCH", f"/api/folders/{folder_id}", json={"name": name})
+
+    async def delete_folder(self, folder_id: str) -> dict:
+        return await self._json("DELETE", f"/api/folders/{folder_id}")
+
+    async def move_notebook(self, notebook_id: str, folder_id: str | None) -> dict:
+        return await self._json("PUT", f"/api/notebooks/{notebook_id}/folder",
+                                json={"folder_id": folder_id})
+
+    async def ensure_folder(self, name: str) -> dict:
+        """Find a folder by exact name, creating it when missing (idempotent)."""
+        wanted = " ".join(str(name).split()).casefold()
+        for folder in await self.list_folders():
+            if " ".join(folder["name"].split()).casefold() == wanted:
+                return {**folder, "created": False}
+        return {**await self.create_folder(name), "created": True}
+
+    async def folder_name_for_path(self, path: str) -> str | None:
+        """Folder name implied by a local .ipynb path (its immediate parent directory).
+
+        ``projects/sklearn/demo.ipynb`` -> ``sklearn``. Paths directly inside
+        NEBULA_MCP_FS_ROOT have no folder. Used by create_notebook_file so that
+        "create it at this local path" also files it in the matching Nebula folder.
+        """
+        resolved = self.resolve_path(path).parent
+        if resolved == self.fs_root:
+            return None
+        return resolved.name or None
 
     async def get_notebook(self, notebook_id: str) -> dict:
         return await self._json("GET", f"/api/notebooks/{notebook_id}")
 
-    async def create_notebook(self, title: str, cells: list[dict] | None = None) -> dict:
-        nb = await self._json("POST", "/api/notebooks", json={"title": title})
+    async def create_notebook(self, title: str, cells: list[dict] | None = None,
+                              folder_id: str | None = None) -> dict:
+        payload: dict[str, Any] = {"title": title}
+        if folder_id:
+            payload["folder_id"] = folder_id
+        nb = await self._json("POST", "/api/notebooks", json=payload)
         if cells is not None:
             doc = nb["document"]
             doc["cells"] = [make_cell(spec.get("type", "code"), spec.get("source", "")) for spec in cells]
@@ -587,6 +801,20 @@ class NebulaClient:
         await self.close_kernel(notebook_id)
         return await self._json("DELETE", f"/api/notebooks/{notebook_id}/runtime")
 
+    async def runtime_overview(self) -> list[dict]:
+        """List visible notebooks with their runtime mode/status (for quota triage)."""
+        notebooks = await self.list_notebooks()
+
+        async def one(nb: dict) -> dict:
+            try:
+                status = await self.runtime_status(nb["id"])
+                mode, state = status.get("mode"), status.get("status")
+            except NebulaError as exc:
+                mode, state = None, f"unavailable: {_clip(str(exc), 120)}"
+            return {"id": nb["id"], "title": nb.get("title"), "mode": mode, "status": state,
+                    "holds_session": state == "ready"}
+        return await asyncio.gather(*(one(nb) for nb in notebooks))
+
     async def interrupt(self, notebook_id: str) -> dict:
         return await self._json("POST", f"/api/notebooks/{notebook_id}/runtime/interrupt")
 
@@ -696,6 +924,109 @@ class NebulaClient:
             response["saved_version"] = version
         return response
 
+    async def run_cells(self, notebook_id: str, *, start: int = 0, count: int | None = None,
+                        timeout: float | None = None, persist: bool = True,
+                        stop_on_error: bool = True, include_data: bool = False) -> dict:
+        """Execute a *window* of code cells so long notebooks fit client timeouts.
+
+        ``start`` and ``count`` are counted in **code cells** (markdown cells are
+        skipped), which makes the window stable across notebook edits. The reply
+        carries ``next_start`` and ``done`` so a client can loop:
+
+            start = 0
+            while True:
+                r = run_cells(nb, start=start, count=5, timeout=120)
+                if r["done"]:
+                    break
+                start = r["next_start"]
+
+        Outputs are persisted for the whole window in a single notebook save.
+        """
+        nb = await self.get_notebook(notebook_id)
+        cells = nb["document"].get("cells", [])
+        code_cells = [(i, c) for i, c in enumerate(cells) if c.get("cell_type") == "code"]
+        total = len(code_cells)
+        begin = max(0, min(int(start), total))
+        end = total if count is None else min(total, begin + max(0, int(count)))
+
+        results = []
+        for ordinal in range(begin, end):
+            at, cell = code_cells[ordinal]
+            cid = cell.get("id")
+            result = await self.execute(notebook_id, text(cell.get("source")), timeout)
+            results.append({
+                "cell_id": cid,
+                "index": at,
+                "code_ordinal": ordinal,
+                "status": result["status"],
+                "execution_count": result["execution_count"],
+                "timed_out": result["timed_out"],
+                "outputs": summarize_outputs(result["outputs"], include_data=include_data),
+                "_raw": result["outputs"],
+                "_exec": result["execution_count"],
+            })
+            if stop_on_error and result["status"] not in ("ok", "timeout"):
+                break
+
+        saved_version = None
+        if persist and results:
+            for _ in range(5):
+                current = await self.get_notebook(notebook_id)
+                for item in results:
+                    try:
+                        _, target = self._cell(current["document"], item["cell_id"])
+                    except NebulaError:
+                        continue
+                    target["outputs"] = item.pop("_raw")
+                    target["execution_count"] = item.pop("_exec")
+                try:
+                    saved = await self.save_notebook(
+                        notebook_id, current["title"], current["version"], current["document"])
+                    saved_version = saved["version"]
+                    break
+                except Conflict:
+                    await asyncio.sleep(0.05)
+            for item in results:
+                item.pop("_raw", None)
+                item.pop("_exec", None)
+            if saved_version is None:
+                raise Conflict("Notebook changed repeatedly while saving run window")
+
+        ran_to = results[-1]["code_ordinal"] + 1 if results else begin
+        interrupted = bool(stop_on_error and results
+                           and results[-1]["status"] not in ("ok", "timeout"))
+        return {
+            "notebook_id": notebook_id,
+            "total_code_cells": total,
+            "start": begin,
+            "ran": len(results),
+            "next_start": None if (interrupted or ran_to >= total) else ran_to,
+            "done": (not interrupted) and ran_to >= total,
+            "interrupted_by_error": interrupted,
+            "cells": results,
+            "saved_version": saved_version,
+        }
+
+    async def diagnose(self, notebook_id: str, timeout: float | None = None) -> dict:
+        """Report runtime readiness from *inside* the notebook kernel.
+
+        Useful before running a tutorial: verifies the packages exist, whether
+        matplotlib will actually emit images (MPLBACKEND=Agg needs
+        ``%matplotlib inline``), whether a CJK font is installed, and what the
+        real (possibly nested) /workspace contains. Starts the runtime if needed.
+        """
+        result = await self.execute(notebook_id, _KERNEL_DIAGNOSE, timeout or self.run_timeout)
+        payload = _stdout_of(result["outputs"])
+        report = _last_json(payload)
+        if not isinstance(report, dict):
+            raise NebulaError(
+                "Runtime diagnosis failed to produce a report; raw stdout was: "
+                + _clip(payload, 600)
+            )
+        report["notebook_id"] = notebook_id
+        report["runtime_status"] = (await self.runtime_status(notebook_id)).get("status")
+        return report
+
     # ---------- Local .ipynb / workspace files ----------
 
     def resolve_path(self, path: str) -> Path:
@@ -707,14 +1038,17 @@ class NebulaClient:
             raise NebulaError(f"Path is outside NEBULA_MCP_FS_ROOT ({self.fs_root}): {p}")
         return p
 
-    async def import_notebook(self, path: str, title: str | None = None) -> dict:
+    async def import_notebook(self, path: str, title: str | None = None,
+                              folder_id: str | None = None) -> dict:
         p = self.resolve_path(path)
         if not p.is_file():
             raise NebulaError(f"Notebook file not found: {p}")
         data = p.read_bytes()
+        form = {"folder_id": folder_id} if folder_id else None
         r = await self._request(
             "POST", "/api/notebooks/import",
             files={"file": (p.name, data, "application/json")},
+            data=form,
         )
         nb = r.json()
         if title and title != nb["title"]:
@@ -732,17 +1066,53 @@ class NebulaClient:
         return {"notebook_id": notebook_id, "path": str(p), "bytes": len(r.content)}
 
     async def create_notebook_file(self, path: str, *, title: str | None = None,
-                                   cells: list[dict] | None = None, overwrite: bool = False) -> dict:
+                                   cells: list[dict] | None = None, overwrite: bool = False,
+                                   folder: str | bool | None = True) -> dict:
+        """Write a real .ipynb locally and import it into Nebula.
+
+        ``folder`` (default True) mirrors the local parent directory into a Nebula
+        folder: ``projects/sklearn/01.ipynb`` lands in the folder ``sklearn``.
+        Pass ``folder=False`` to import it at the root, or a string to name the
+        folder explicitly.
+        """
         p = self.resolve_path(path)
         if p.exists() and not overwrite:
             raise NebulaError(f"File already exists: {p} (pass overwrite=true)")
         p.parent.mkdir(parents=True, exist_ok=True)
         doc = default_document([make_cell(s.get("type", "code"), s.get("source", "")) for s in (cells or [])])
         p.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-        nb = await self.import_notebook(str(p), title=title)
-        return {"notebook_id": nb["id"], "title": nb["title"], "path": str(p), "cells": len(nb["document"]["cells"])}
 
-    async def list_workspace(self, notebook_id: str) -> list[dict]:
+        folder_id, folder_info = None, None
+        if folder is not False:
+            name = folder if isinstance(folder, str) and folder else await self.folder_name_for_path(str(p))
+            if name:
+                folder_info = await self.ensure_folder(name)
+                folder_id = folder_info["id"]
+        nb = await self.import_notebook(str(p), title=title, folder_id=folder_id)
+        result = {"notebook_id": nb["id"], "title": nb["title"], "path": str(p),
+                  "cells": len(nb["document"]["cells"]), "folder_id": folder_id}
+        if folder_info:
+            result["folder"] = {"id": folder_info["id"], "name": folder_info["name"],
+                                "created": folder_info["created"]}
+        return result
+
+    async def list_workspace(self, notebook_id: str, recursive: bool = False) -> list[dict]:
+        """List workspace files.
+
+        ``recursive=False`` uses the REST API and therefore only returns the
+        flat root-level regular files the browser UI can also see.
+        ``recursive=True`` walks the real /workspace inside the kernel, which
+        also reveals subdirectories written by Python code (needs a runtime).
+        """
+        if recursive:
+            result = await self.execute(notebook_id, _KERNEL_WALK, self.run_timeout)
+            tree = _last_json(_stdout_of(result["outputs"])) or {}
+            return [
+                {"path": item["path"], "name": item["path"].rsplit("/", 1)[-1],
+                 "size": item["size"], "depth": item["path"].count("/"),
+                 "source": "kernel"}
+                for item in tree.get("files", [])
+            ]
         return await self._json("GET", f"/api/notebooks/{notebook_id}/files")
 
     async def upload_workspace(self, notebook_id: str, filename: str, *, path: str | None = None,
@@ -779,6 +1149,48 @@ class NebulaClient:
         return await self._json("DELETE", f"/api/notebooks/{notebook_id}/files/{filename}")
 
     # ---------- Sharing / administration ----------
+
+
+    async def write_workspace(self, notebook_id: str, path: str, *,
+                              content: str | None = None,
+                              local_path: str | None = None,
+                              timeout: float | None = None) -> dict:
+        """Write a file to /workspace at an arbitrary relative depth.
+
+        The REST API only accepts simple root-level filenames, so nested layouts
+        are written through the kernel. Provide exactly one of ``content`` (text)
+        or ``local_path`` (a file inside NEBULA_MCP_FS_ROOT).
+        """
+        if (content is None) == (local_path is None):
+            raise NebulaError("Provide exactly one of content or local_path")
+        if local_path is not None:
+            data = self.resolve_path(local_path).read_bytes()
+        else:
+            data = str(content).encode("utf-8")
+        rel = normalize_workspace_path(path)
+        code = (
+            "REL_PATH = " + repr(rel) + "\n"
+            "PAYLOAD_B64 = " + repr(base64.b64encode(data).decode("ascii")) + "\n"
+            + _KERNEL_WRITE
+        )
+        result = await self.execute(notebook_id, code, timeout or self.run_timeout)
+        payload = _stdout_of(result["outputs"])
+        info = _last_json(payload)
+        if result["status"] != "ok" or not isinstance(info, dict):
+            raise NebulaError(f"Could not write /workspace/{rel}: " + _clip(payload, 600))
+        return {"notebook_id": notebook_id, "path": info["path"], "size": info["size"]}
+
+    async def read_workspace(self, notebook_id: str, path: str, *,
+                             timeout: float | None = None) -> bytes:
+        """Read any file under /workspace (including nested paths) via the kernel."""
+        rel = normalize_workspace_path(path)
+        code = "REL_PATH = " + repr(rel) + "\n" + _KERNEL_READ
+        result = await self.execute(notebook_id, code, timeout or self.run_timeout)
+        payload = _stdout_of(result["outputs"])
+        info = _last_json(payload)
+        if result["status"] != "ok" or not isinstance(info, dict):
+            raise NebulaError(f"Could not read /workspace/{rel}: " + _clip(payload, 600))
+        return base64.b64decode(info["b64"])
 
     async def list_shares(self, notebook_id: str) -> list[dict]:
         return await self._json("GET", f"/api/notebooks/{notebook_id}/shares")

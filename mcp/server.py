@@ -70,7 +70,10 @@ Use these tools to create and edit real .ipynb notebooks and execute them in a
 Docker-managed CPU/GPU kernel.
 
 Recommended workflow:
-1. notebook_list / notebook_get to find notebooks and cell ids.
+1. notebook_list / notebook_get to find notebooks and cell ids; folder_list to see
+   folders (flat, personal grouping). notebook_create(folder_id=...),
+   notebook_create_file(path="dir/x.ipynb") (mirrors the local dir into a folder),
+   folder_ensure(name) and notebook_move() file notebooks under a folder.
 2. notebook_create (title, optional initial cells) or notebook_create_file
    (write a real .ipynb to a local path and import it).
 3. cell_add (index/after_cell_id), cell_update, cell_move, cell_delete.
@@ -78,10 +81,20 @@ Recommended workflow:
    automatically. Outputs are saved into the notebook by default (persist=true).
 5. Use include_data=true only when you need full image/HTML MIME payloads;
    the default returns compact text/binary summaries.
-6. Use workspace_upload for datasets; the kernel sees them at /workspace/<name>.
-   workspace_download exports kernel-written artifacts.
+6. Use workspace_upload for flat datasets; the kernel sees them at
+   /workspace/<name>. Use workspace_write(path="dir/file") for nested layouts
+   (the REST API only accepts simple root-level filenames), and
+   workspace_list(recursive=true) / workspace_read to inspect them.
 7. notebook_export writes the current .ipynb to a local path (within
    NEBULA_MCP_FS_ROOT).
+8. For notebooks slower than your client timeout, use notebook_run_cells(start,
+   count, timeout) and loop on next_start until done — cell_run_all can exceed
+   client timeouts on heavy notebooks and then returns nothing.
+9. Call runtime_diagnose(notebook_id) before running a tutorial: it reports
+   package versions, whether figures will render (MPLBACKEND=Agg requires
+   '%matplotlib inline'), CJK font availability and the real /workspace tree.
+10. On HTTP 429 "CPU session quota reached", call runtime_quota() to see which
+   notebooks hold a session and runtime_stop() the ones you no longer need.
 
 Notebook ids are UUIDs. Cell indexes are 0-based. Cell sources are strings.
 The API stores notebooks in one flat list (Nebula v0.1 has no folders); use
@@ -96,6 +109,21 @@ class CellSpec(BaseModel):
     """Initial or added cell content."""
     type: Literal["code", "markdown", "raw"] = "code"
     source: str = ""
+
+
+async def _with_hints(awaitable):
+    """Add actionable hints to the errors agents hit most often."""
+    try:
+        return await awaitable
+    except NebulaError as exc:
+        msg = str(exc)
+        if "429" in msg or "quota" in msg.lower():
+            raise NebulaError(
+                msg + " — hint: Nebula caps concurrent CPU/GPU sessions per user. "
+                "Call runtime_quota() to see which notebooks hold a session and "
+                "runtime_stop() the ones you no longer need."
+            ) from None
+        raise
 
 
 def _require_write(operation: str) -> None:
@@ -129,9 +157,14 @@ async def nebula_capabilities(refresh: bool = False) -> dict:
 
 
 @mcp.tool(annotations=READ)
-async def notebook_list() -> list[dict]:
-    """List notebooks visible to the configured user (id, title, role, updated_at)."""
-    return await client.list_notebooks()
+async def notebook_list(folder_id: str | None = None) -> list[dict]:
+    """List notebooks visible to the configured user (id, title, role, folder_id, updated_at).
+
+    Rows carry ``folder_id`` (null = root level). Pass ``folder_id`` to list a
+    single folder, or ``folder_id=""`` for the root only. See folder_list() for
+    folder names with notebook counts.
+    """
+    return await client.list_notebooks(folder_id=folder_id)
 
 
 @mcp.tool(annotations=READ)
@@ -159,19 +192,22 @@ async def notebook_get(notebook_id: str, include_outputs: bool = False,
 
 
 @mcp.tool(annotations=WRITE)
-async def notebook_create(title: str, cells: list[CellSpec] | None = None) -> dict:
-    """Create a notebook. Optionally seed it with initial code/markdown/raw cells.
+async def notebook_create(title: str, cells: list[CellSpec] | None = None,
+                          folder_id: str | None = None) -> dict:
+    """Create a notebook, optionally seeded with initial code/markdown/raw cells.
 
-    Nebula v0.1 has a flat notebook list (no folder tree); title is the primary
-    human-readable locator. Use notebook_create_file if you need a real .ipynb
-    at a specific local path.
+    Pass ``folder_id`` to file it in a folder (see folder_list /
+    folder_ensure); omit it to create at the root. Notebook titles stay the
+    primary human-readable locator — folders only group the dashboard list.
+    Use notebook_create_file if you also want a real .ipynb at a local path.
     """
     _require_write("notebook_create")
-    nb = await client.create_notebook(title, _cells_payload(cells))
+    nb = await client.create_notebook(title, _cells_payload(cells), folder_id=folder_id)
     return {
         "id": nb["id"],
         "title": nb["title"],
         "version": nb["version"],
+        "folder_id": nb.get("folder_id"),
         "cells": len(nb["document"].get("cells", [])),
     }
 
@@ -179,15 +215,17 @@ async def notebook_create(title: str, cells: list[CellSpec] | None = None) -> di
 @mcp.tool(annotations=WRITE)
 async def notebook_create_file(path: str, title: str | None = None,
                                cells: list[CellSpec] | None = None,
-                               overwrite: bool = False) -> dict:
+                               overwrite: bool = False,
+                               folder: str | None = None) -> dict:
     """Create a real .ipynb at a local path and import it into Nebula.
 
     path is resolved inside NEBULA_MCP_FS_ROOT. The trail name/title can be
     controlled independently; title defaults to the file stem.
     """
     _require_write("notebook_create_file")
-    return await client.create_notebook_file(
-        path, title=title, cells=_cells_payload(cells), overwrite=overwrite)
+    return await _with_hints(client.create_notebook_file(
+        path, title=title, cells=_cells_payload(cells), overwrite=overwrite,
+        folder=folder if folder else True))
 
 
 @mcp.tool(annotations=WRITE)
@@ -196,6 +234,55 @@ async def notebook_import(path: str, title: str | None = None) -> dict:
     _require_write("notebook_import")
     nb = await client.import_notebook(path, title=title)
     return {"id": nb["id"], "title": nb["title"], "version": nb["version"]}
+
+
+# --------------------------------------------------------------------------
+# Folders (flat, personal grouping layer on the dashboard)
+# --------------------------------------------------------------------------
+
+@mcp.tool(annotations=READ)
+async def folder_list() -> list[dict]:
+    """List your folders with notebook counts (folders are personal, never shared)."""
+    return await client.list_folders()
+
+
+@mcp.tool(annotations=WRITE)
+async def folder_create(name: str) -> dict:
+    """Create a folder. Names are unique per user (case-insensitive)."""
+    _require_write("folder_create")
+    return await client.create_folder(name)
+
+
+@mcp.tool(annotations=WRITE)
+async def folder_ensure(name: str) -> dict:
+    """Find a folder by name or create it — idempotent, safe to call before filing.
+
+    Returns {"id", "name", "notebook_count", "created", "existed"}.
+    """
+    _require_write("folder_ensure")
+    folder = await client.ensure_folder(name)
+    return {**folder, "existed": not folder.get("created", False)}
+
+
+@mcp.tool(annotations=WRITE)
+async def folder_rename(folder_id: str, name: str) -> dict:
+    """Rename a folder (owner only)."""
+    _require_write("folder_rename")
+    return await client.rename_folder(folder_id, name)
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def folder_delete(folder_id: str) -> dict:
+    """Delete a folder. Its notebooks are moved back to the root, never deleted."""
+    _require_write("folder_delete")
+    return await client.delete_folder(folder_id)
+
+
+@mcp.tool(annotations=WRITE)
+async def notebook_move(notebook_id: str, folder_id: str | None = None) -> dict:
+    """Move a notebook into a folder (folder_id=null moves it back to the root)."""
+    _require_write("notebook_move")
+    return await client.move_notebook(notebook_id, folder_id)
 
 
 @mcp.tool(annotations=WRITE)
@@ -311,9 +398,9 @@ async def cell_run(notebook_id: str, cell_id: str | None = None,
     and execution_count are saved back to the notebook. timeout is per cell.
     """
     _require_write("cell_run")
-    return await client.run_cell(
+    return await _with_hints(client.run_cell(
         notebook_id, cell_id=cell_id, index=index, timeout=timeout,
-        persist=persist, include_data=include_data)
+        persist=persist, include_data=include_data))
 
 
 @mcp.tool(annotations=EXECUTE)
@@ -326,9 +413,58 @@ async def cell_run_all(notebook_id: str, timeout: float = 60,
     after the first error/timeout; outputs already produced are still saved.
     """
     _require_write("cell_run_all")
-    return await client.run_all(
+    return await _with_hints(client.run_all(
         notebook_id, timeout=timeout, persist=persist,
-        stop_on_error=stop_on_error, include_data=include_data)
+        stop_on_error=stop_on_error, include_data=include_data))
+
+
+@mcp.tool(annotations=EXECUTE)
+async def notebook_run_cells(notebook_id: str, start: int = 0,
+                             count: int = 5, timeout: float = 120,
+                             persist: bool = True, stop_on_error: bool = True,
+                             include_data: bool = False) -> dict:
+    """Run a *window* of code cells — the resumable alternative to cell_run_all.
+
+    `start`/`count` are counted in code cells (markdown skipped). Use it when a
+    notebook is slower than your MCP client timeout: run a few cells per call and
+    continue with `next_start` until `done` is true.
+
+        start = 0
+        while True:
+            r = notebook_run_cells(nb, start=start, count=5, timeout=120)
+            print(r["ran"], r["done"])
+            if r["done"]:
+                break
+            start = r["next_start"]
+
+    Outputs for the whole window are saved in one notebook save (persist=true).
+    """
+    _require_write("notebook_run_cells")
+    return await _with_hints(client.run_cells(
+        notebook_id, start=start, count=count, timeout=timeout, persist=persist,
+        stop_on_error=stop_on_error, include_data=include_data))
+
+
+@mcp.tool(annotations=READ)
+async def runtime_diagnose(notebook_id: str, timeout: float = 60) -> dict:
+    """Report the runtime environment from inside the kernel.
+
+    Checks package versions (numpy/pandas/scipy/sklearn/torch), the matplotlib
+    backend, whether `%matplotlib inline` is required for figures to appear,
+    CJK font availability (Chinese labels), relevant env vars, and the real
+    (possibly nested) /workspace tree. Starts the runtime if it is not running.
+    """
+    return await _with_hints(client.diagnose(notebook_id, timeout=timeout))
+
+
+@mcp.tool(annotations=READ)
+async def runtime_quota() -> list[dict]:
+    """List visible notebooks and whether each currently holds a runtime session.
+
+    Use this after a 429 "CPU session quota reached" error to find the notebooks
+    you should stop with runtime_stop().
+    """
+    return await _with_hints(client.runtime_overview())
 
 
 @mcp.tool(annotations=EXECUTE)
@@ -340,9 +476,9 @@ async def code_execute(notebook_id: str, code: str, timeout: float = 60,
     containing the code and outputs is appended to the notebook.
     """
     _require_write("code_execute")
-    return await client.execute_code(
+    return await _with_hints(client.execute_code(
         notebook_id, code, timeout=timeout, persist=persist,
-        include_data=include_data)
+        include_data=include_data))
 
 
 @mcp.tool(annotations=WRITE)
@@ -378,19 +514,66 @@ async def kernel_interrupt(notebook_id: str) -> dict:
 # --------------------------------------------------------------------------
 
 @mcp.tool(annotations=READ)
-async def workspace_list(notebook_id: str) -> list[dict]:
-    """List files in the notebook's persistent /workspace directory."""
-    return await client.list_workspace(notebook_id)
+async def workspace_list(notebook_id: str, recursive: bool = False) -> list[dict]:
+    """List files in the notebook's persistent /workspace directory.
+
+    recursive=false (default) uses the REST API: flat, root-level regular files
+    only — exactly what the browser file panel shows.
+    recursive=true walks the real /workspace inside the kernel, so it also sees
+    subdirectories created by Python code (e.g. /workspace/sklearn-tutorials/…).
+    Requires a runtime (it is started on demand).
+    """
+    return await _with_hints(client.list_workspace(notebook_id, recursive=recursive))
+
+
+@mcp.tool(annotations=WRITE)
+async def workspace_write(notebook_id: str, path: str,
+                          content: str | None = None,
+                          local_path: str | None = None,
+                          timeout: float = 60) -> dict:
+    """Write a file into /workspace at any relative depth (subdirectories OK).
+
+    The REST API only accepts simple root-level filenames, so this tool writes
+    through the kernel instead and creates parent directories as needed.
+    Provide exactly one of `content` (text) or `local_path` (a file inside
+    NEBULA_MCP_FS_ROOT). `path` must be relative, e.g.
+    "sklearn-tutorials/data/sample.csv".
+    """
+    _require_write("workspace_write")
+    return await _with_hints(client.write_workspace(
+        notebook_id, path, content=content, local_path=local_path, timeout=timeout))
+
+
+@mcp.tool(annotations=READ)
+async def workspace_read(notebook_id: str, path: str, max_chars: int = 20000,
+                         timeout: float = 60) -> dict:
+    """Read any file under /workspace (including nested paths) through the kernel.
+
+    Text files are returned as text (truncated to max_chars); binary files are
+    returned as base64.
+    """
+    data = await _with_hints(client.read_workspace(
+        notebook_id, path, timeout=timeout))
+    try:
+        text_value = data.decode("utf-8")
+        truncated = len(text_value) > max_chars
+        return {"path": path, "bytes": len(data), "encoding": "utf-8",
+                "truncated": truncated, "text": text_value[:max_chars]}
+    except UnicodeDecodeError:
+        return {"path": path, "bytes": len(data), "encoding": "base64",
+                "truncated": False, "base64": base64.b64encode(data).decode("ascii")}
 
 
 @mcp.tool(annotations=WRITE)
 async def workspace_upload(notebook_id: str, filename: str,
                            path: str | None = None,
                            content: str | None = None) -> dict:
-    """Upload a file to /workspace from a local path or from text content.
+    """Upload a flat file to /workspace from a local path or from text content.
 
-    Duplicate filenames are rejected by the API; delete the old file first.
-    Filenames must be simple (letters, digits, underscore, dot, dash).
+    `filename` must be a simple root-level name (letters, digits, underscore,
+    dot, dash) — the REST API rejects anything containing "/". To write into a
+    subdirectory use workspace_write(path="dir/file.ext", ...) instead.
+    Duplicate filenames are rejected; delete the old file first.
     """
     _require_write("workspace_upload")
     return await client.upload_workspace(
