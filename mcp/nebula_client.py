@@ -798,6 +798,37 @@ class NebulaClient:
             json={"mode": mode or self.default_mode},
         )
 
+    async def submit_run(self, notebook_id: str, cell_id: str, idempotency_key: str,
+                         mode: str = "cpu", timeout_seconds: int = 300) -> dict:
+        """Submit one durable execution intent; callers MUST reuse key on retry."""
+        return await self._json("POST", f"/api/notebooks/{notebook_id}/runs", json={
+            "cell_id": cell_id, "idempotency_key": idempotency_key,
+            "mode": mode, "timeout_seconds": timeout_seconds,
+        })
+
+    async def get_run(self, notebook_id: str, run_id: str) -> dict:
+        return await self._json("GET", f"/api/notebooks/{notebook_id}/runs/{run_id}")
+
+    async def cancel_run(self, notebook_id: str, run_id: str) -> dict:
+        return await self._json("POST", f"/api/notebooks/{notebook_id}/runs/{run_id}/cancel")
+
+    async def wait_run(self, notebook_id: str, run_id: str,
+                       wait_seconds: float = 15.0, poll_seconds: float = 0.7) -> dict:
+        """Bounded status polling: a client timeout does NOT submit another run."""
+        if not 0 <= wait_seconds <= 30:
+            raise NebulaError("wait_seconds must be in [0, 30]")
+        if not 0.2 <= poll_seconds <= 5:
+            raise NebulaError("poll_seconds must be in [0.2, 5]")
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            run = await self.get_run(notebook_id, run_id)
+            if run.get("status") in ("succeeded", "failed", "timed_out", "cancelled", "interrupted", "stale"):
+                return run
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return run
+            await asyncio.sleep(min(poll_seconds, remaining))
+
     async def runtime_status(self, notebook_id: str) -> dict:
         return await self._json("GET", f"/api/notebooks/{notebook_id}/runtime")
 

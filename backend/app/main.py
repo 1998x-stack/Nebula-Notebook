@@ -27,6 +27,10 @@ from .security import (hash_password, verify_password, rate_check, new_session, 
                        admin_only, admin_write, require_notebook, websocket_identity)
 from .validation import default_document, checked_document
 from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtime
+from .execution import (schedule_run, recover_runs, shutdown_runs, submit_run,
+                        request_cancel, public_run, ACTIVE)
+from .db import ExecutionRun
+from typing import Literal
 
 
 @asynccontextmanager
@@ -42,6 +46,7 @@ async def lifespan(app: FastAPI):
             if 'document_bytes' not in cols:
                 await conn.exec_driver_sql(
                     'ALTER TABLE notebooks ADD COLUMN document_bytes INTEGER NOT NULL DEFAULT 0')
+    await recover_runs()
     async with SessionLocal() as db:
         # One-time backfill for notebooks created before document_bytes existed.
         stale = (await db.scalars(select(Notebook).where(Notebook.document_bytes == 0))).all()
@@ -57,6 +62,7 @@ async def lifespan(app: FastAPI):
                         password_hash=hash_password(settings.admin_password), is_admin=True))
             await db.commit()
     yield
+    await shutdown_runs()
 
 
 app = FastAPI(title='Nebula Notebook API', version='0.1.0', lifespan=lifespan)
@@ -106,6 +112,14 @@ class SaveNotebook(BaseModel):
 class ShareNotebook(BaseModel):
     email: str
     role: str
+
+
+
+class SubmitExecutionRun(BaseModel):
+    cell_id: str = Field(min_length=1, max_length=80)
+    idempotency_key: str = Field(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
+    mode: Literal['cpu', 'gpu'] = 'cpu'
+    timeout_seconds: int = Field(default=300, ge=1, le=1800)
 
 
 class LaunchRuntime(BaseModel):
@@ -344,6 +358,10 @@ async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession =
 @app.delete('/api/notebooks/{notebook_id}')
 async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     nb, _ = await require_notebook(db, notebook_id, actor, 'owner')
+    active_run = await db.scalar(select(ExecutionRun.id).where(
+        ExecutionRun.notebook_id == notebook_id, ExecutionRun.status.in_(ACTIVE)).limit(1))
+    if active_run:
+        raise HTTPException(409, 'Cancel and finish managed execution runs before deleting notebook')
     await stop_runtime(db, notebook_id, actor.id)
     await db.execute(delete(NotebookPermission).where(NotebookPermission.notebook_id == notebook_id))
     await db.delete(nb)
@@ -475,6 +493,45 @@ async def runtime_capabilities(refresh: bool = False, actor=Depends(current_user
     return await capabilities(refresh=refresh)
 
 
+
+@app.post('/api/notebooks/{notebook_id}/runs')
+async def create_execution_run(notebook_id: str, body: SubmitExecutionRun, response: Response,
+                               db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
+    """Durable run ID + retry-safe submission. POST never blocks on Python execution."""
+    nb, _ = await require_notebook(db, notebook_id, actor, 'editor')
+    run, created = await submit_run(
+        db, nb, actor.id, cell_id=body.cell_id,
+        idempotency_key=body.idempotency_key, mode=body.mode,
+        timeout_seconds=body.timeout_seconds)
+    response.status_code = 202 if created else 200
+    if created:
+        schedule_run(run.id)
+    return public_run(run)
+
+
+@app.get('/api/notebooks/{notebook_id}/runs/{run_id}')
+async def get_execution_run(notebook_id: str, run_id: str,
+                            db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
+    await require_notebook(db, notebook_id, actor, 'editor')
+    run = await db.get(ExecutionRun, run_id)
+    if not run or run.notebook_id != notebook_id:
+        raise HTTPException(404, 'Execution run not found')
+    return public_run(run)
+
+
+@app.post('/api/notebooks/{notebook_id}/runs/{run_id}/cancel')
+async def cancel_execution_run(notebook_id: str, run_id: str,
+                               db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
+    nb, role = await require_notebook(db, notebook_id, actor, 'editor')
+    run = await db.get(ExecutionRun, run_id)
+    if not run or run.notebook_id != notebook_id:
+        raise HTTPException(404, 'Execution run not found')
+    if actor.id != run.actor_id and role != 'owner':
+        raise HTTPException(403, 'Only the run creator or notebook owner can cancel')
+    await request_cancel(db, run)
+    return public_run(run)
+
+
 @app.get('/api/notebooks/{notebook_id}/runtime')
 async def runtime_status(notebook_id: str, db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
     await require_notebook(db, notebook_id, actor)
@@ -492,6 +549,10 @@ async def launch_runtime(notebook_id: str, body: LaunchRuntime, db: AsyncSession
 @app.delete('/api/notebooks/{notebook_id}/runtime')
 async def shutdown_runtime(notebook_id: str, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     await require_notebook(db, notebook_id, actor, 'editor')
+    active_run = await db.scalar(select(ExecutionRun.id).where(
+        ExecutionRun.notebook_id == notebook_id, ExecutionRun.status.in_(ACTIVE)).limit(1))
+    if active_run:
+        raise HTTPException(409, 'Cancel the managed execution run before stopping Runtime')
     await stop_runtime(db, notebook_id, actor.id)
     return {'status': 'stopped'}
 
@@ -587,6 +648,15 @@ async def kernel_channels(ws: WebSocket, notebook_id: str):
                             await ws.close(code=1008, reason='Unsupported kernel message')
                             return
                         if kind == 'execute_request':
+                            # A managed Agent run has exclusive notebook execution intent.
+                            # Legacy browser/MCP calls must not silently interleave with it.
+                            async with SessionLocal() as check_db:
+                                active_job = await check_db.scalar(select(ExecutionRun.id).where(
+                                    ExecutionRun.notebook_id == notebook_id,
+                                    ExecutionRun.status.in_(ACTIVE)).limit(1))
+                            if active_job:
+                                await ws.close(code=1013, reason='Managed run active; query run status')
+                                return
                             code = parsed.get('content', {}).get('code')
                             if not isinstance(code, str) or len(code) > settings.max_cell_source_chars:
                                 await ws.close(code=1009)
@@ -773,4 +843,3 @@ async def folder_spa(folder_id: str):
 
 if frontend_dist.exists():
     app.mount('/', StaticFiles(directory=frontend_dist, html=True), name='frontend')
-
