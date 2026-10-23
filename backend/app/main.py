@@ -161,7 +161,10 @@ class MergePreview(BaseModel):
 
 class MergeCommit(MergePreview):
     expected_latest_version: int = Field(ge=1)
-    operation_id: str = Field(min_length=8, max_length=128, pattern=r'^[A-Za-z0-9_-]+
+    operation_id: str = Field(min_length=8, max_length=128)
+
+
+class ShareNotebook(BaseModel):
     email: str
     role: str
 
