@@ -57,7 +57,7 @@ Do not globally publish Jupyter port `8888`. Runtime ports should remain bound t
 
 ## MCP server for LLM agents
 
-`mcp/` is an optional stdio MCP server that exposes 35 Nebula tools and two resources to Pi, Claude Desktop/Code, Codex CLI and OpenCode. It logs in through the normal API and uses the same WebSocket kernel proxy; it does not bypass auth/RBAC. Local file import/export is restricted by `NEBULA_MCP_FS_ROOT`.
+`mcp/` is an optional stdio MCP server that exposes 57 Nebula tools and two resources to Pi, Claude Desktop/Code, Codex CLI and OpenCode. It logs in through the normal API and uses the same WebSocket kernel proxy; it does not bypass auth/RBAC. Local file import/export is restricted by `NEBULA_MCP_FS_ROOT`.
 
 ```bash
 # One-time dependency setup (or let mcp/run.sh bootstrap it)
