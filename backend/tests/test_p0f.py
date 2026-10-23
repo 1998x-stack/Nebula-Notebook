@@ -64,6 +64,7 @@ async def test_prune_dry_run_retains_complete_history_and_replays_after_reset(cl
     stream = notebook_stream(request, nb['id'], old_id)
     reset = await asyncio.wait_for(anext(stream), 3)
     assert reset.splitlines()[0] == 'event: stream_reset'
+    assert f'id: {floor}' in reset
     assert json.loads(reset.split('data: ')[1].strip())['floor'] == floor
     replayed = await asyncio.wait_for(anext(stream), 3)
     assert f'id: {original[5].id}' in replayed
