@@ -536,12 +536,13 @@ function NotebookEditor({id,user,back,logout}) {
          expected_latest_version:operation.latest_version,operation_id:operation.id,
          mine_title:latestTitle.current,mine_document:latestDoc.current,
          resolutions:operation.choices})});
-     const normalized=normalize(updated.document);
+     const fresh=await api(`/notebooks/${id}`);
+     const normalized=normalize(fresh.document);
      latestDoc.current=normalized;setDoc(normalized);
-     latestTitle.current=updated.title;setTitle(updated.title);
-     versions.current=updated.version;
-     baselineRef.current={version:updated.version,document:normalized};
-     baselineTitleRef.current=updated.title;
+     latestTitle.current=fresh.title;setTitle(fresh.title);
+     versions.current=fresh.version;
+     baselineRef.current={version:fresh.version,document:normalized};
+     baselineTitleRef.current=fresh.title;
      dirtyRef.current=false;setDirty(false);setSaving('saved');
      mergeBlockedRef.current=false;mergeOperationRef.current=null;
      setMergeOpen(false);setMergePreview(null);setMergeChoices({});
