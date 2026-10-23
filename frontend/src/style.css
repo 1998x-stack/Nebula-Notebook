@@ -81,3 +81,15 @@ body{overflow:hidden}
 
 /* With body scroll disabled, the auth screen must provide its own scrolling. */
 .auth-layout{height:100vh;overflow-y:auto;padding:24px 0}
+
+/* P0-E conflict resolution: bounded side-by-side snapshots, no hidden code. */
+.merge-conflict{border:1px solid #394763;border-radius:10px;padding:13px;margin:10px 0;background:#131e30}
+.merge-conflict>strong{font-size:13px;color:#e1e7fa;overflow-wrap:anywhere}
+.merge-conflict>.muted{font-size:12px;margin:6px 0}
+.merge-conflict label{display:block;margin-top:12px;font-size:12px}
+.merge-conflict select{width:100%;min-width:0}
+.merge-versions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:10px}
+.merge-versions>div{min-width:0;border:1px solid #2e3c53;border-radius:7px;padding:9px;background:#0e1725}
+.merge-versions small{color:#8ea0bc;font-size:10px;letter-spacing:.08em}
+.merge-versions pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:110px;overflow:auto;font-size:11px;line-height:1.45}
+@media(max-width:700px){.merge-versions{grid-template-columns:1fr}}
