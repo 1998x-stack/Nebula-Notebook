@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     max_cell_source_chars: int = 150_000
     kernel_start_timeout: int = 50
     gpu_probe_timeout: int = 25
+    # Login throttling (per client IP, sliding window). Raise for test suites or
+    # environments where many users share one NAT/CI egress IP.
+    login_rate_limit: int = 12
+    login_rate_window_seconds: float = 300.0
 
     @property
     def origins(self) -> set[str]:

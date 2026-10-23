@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -7,18 +8,20 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import (Depends, FastAPI, HTTPException, Request, Response, WebSocket,
+                     WebSocketDisconnect, UploadFile, File, Form)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, or_, select, update, exists
+from sqlalchemy import delete, func, or_, select, update, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 import websockets
 from websockets.exceptions import ConnectionClosed
 
 from .config import settings
-from .db import Base, User, LoginSession, Notebook, NotebookPermission, Runtime, Audit, engine, SessionLocal, get_db, log_event, utcnow
+from .db import (Base, User, LoginSession, Notebook, NotebookPermission, Runtime, Audit, Folder,
+                 engine, SessionLocal, get_db, log_event, utcnow)
 from .security import (hash_password, verify_password, rate_check, new_session, digest,
                        current_user, current_identity, csrf_user, csrf_identity,
                        admin_only, admin_write, require_notebook, websocket_identity)
@@ -30,7 +33,22 @@ from .runtime import capabilities, start_runtime, stop_runtime, interrupt_runtim
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all never alters existing tables, so add the folders column for
+        # databases created before folders existed (SQLite: safe, O(1) metadata op).
+        if engine.dialect.name == 'sqlite':
+            cols = {row[1] for row in (await conn.exec_driver_sql('PRAGMA table_info(notebooks)')).fetchall()}
+            if 'folder_id' not in cols:
+                await conn.exec_driver_sql('ALTER TABLE notebooks ADD COLUMN folder_id VARCHAR(36)')
+            if 'document_bytes' not in cols:
+                await conn.exec_driver_sql(
+                    'ALTER TABLE notebooks ADD COLUMN document_bytes INTEGER NOT NULL DEFAULT 0')
     async with SessionLocal() as db:
+        # One-time backfill for notebooks created before document_bytes existed.
+        stale = (await db.scalars(select(Notebook).where(Notebook.document_bytes == 0))).all()
+        for nb in stale:
+            nb.document_bytes = len(json.dumps(nb.document, ensure_ascii=False))
+        if stale:
+            await db.commit()
         admins = await db.scalar(select(User).where(User.is_admin == True))
         if not admins:
             if not settings.admin_email or (len(settings.admin_password) < 12 or settings.admin_password.startswith(('CHANGE_ME', 'REPLACE_WITH_'))):
@@ -68,6 +86,15 @@ class CreateUser(BaseModel):
 
 class NewNotebook(BaseModel):
     title: str = Field(min_length=1, max_length=200)
+    folder_id: str | None = None
+
+
+class NewFolder(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class MoveNotebook(BaseModel):
+    folder_id: str | None = None
 
 
 class SaveNotebook(BaseModel):
@@ -93,8 +120,50 @@ def me_payload(user: User, csrf: str):
     return {'user': {'id': user.id, 'email': user.email, 'is_admin': user.is_admin}, 'csrf': csrf}
 
 
+def document_size(document) -> int:
+    """Byte size of the stored document, used for the dashboard size column."""
+    try:
+        return len(json.dumps(document, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return 0
+
+
+def clean_folder_name(raw: str) -> str:
+    """Normalise a folder name: collapse whitespace, strip path separators and
+    control characters, cap the length. Names are user-visible labels, not paths."""
+    name = ' '.join(str(raw).split())
+    name = re.sub(r'[\x00-\x1f\x7f/\\]+', ' ', name).strip()
+    name = ' '.join(name.split())[:120]
+    if not name:
+        raise HTTPException(422, 'Folder name must contain at least one visible character')
+    return name
+
+
+async def require_folder(db, folder_id: str, actor, *, write: bool = True):
+    """Folders are personal containers: only the owner may see or change them."""
+    folder = await db.get(Folder, folder_id)
+    if not folder or (folder.owner_id != actor.id and not actor.is_admin):
+        raise HTTPException(404, 'Folder not found')
+    if write and folder.owner_id != actor.id:
+        raise HTTPException(403, 'Only the folder owner can change it')
+    return folder
+
+
+async def folder_rows(db, actor):
+    folders = (await db.scalars(select(Folder).where(Folder.owner_id == actor.id)
+                                .order_by(Folder.name))).all()
+    counts = dict((await db.execute(
+        select(Notebook.folder_id, func.count(Notebook.id))
+        .where(Notebook.owner_id == actor.id, Notebook.folder_id.is_not(None))
+        .group_by(Notebook.folder_id))).all())
+    return [{'id': f.id, 'name': f.name, 'notebook_count': int(counts.get(f.id, 0)),
+             'updated_at': f.updated_at.isoformat() if f.updated_at else None}
+            for f in folders]
+
+
 async def document_payload(db, nb, role):
     result = {'id': nb.id, 'title': nb.title, 'owner_id': nb.owner_id,
+              'folder_id': nb.folder_id, 'size_bytes': int(nb.document_bytes or 0),
               'version': nb.version, 'updated_at': nb.updated_at.isoformat() if nb.updated_at else None,
               'role': role, 'document': nb.document}
     rt = await db.get(Runtime, nb.id)
@@ -181,8 +250,11 @@ async def audit_logs(db: AsyncSession = Depends(get_db), actor=Depends(admin_onl
 
 
 @app.get('/api/notebooks')
-async def list_notebooks(db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
+async def list_notebooks(folder_id: str | None = None, db: AsyncSession = Depends(get_db),
+                         actor=Depends(current_user)):
     query = select(Notebook).order_by(Notebook.updated_at.desc())
+    if folder_id is not None:
+        query = query.where(Notebook.folder_id == (folder_id or None))
     if not actor.is_admin:
         permitted = select(NotebookPermission.id).where(
             NotebookPermission.notebook_id == Notebook.id, NotebookPermission.user_id == actor.id).exists()
@@ -197,21 +269,29 @@ async def list_notebooks(db: AsyncSession = Depends(get_db), actor=Depends(curre
                 NotebookPermission.notebook_id == nb.id, NotebookPermission.user_id == actor.id))
             role = p.role
         rows.append({'id': nb.id, 'title': nb.title, 'role': role,
+                     'folder_id': nb.folder_id,
+                     'size_bytes': int(nb.document_bytes or 0),
+                     'cells': len((nb.document or {}).get('cells', [])),
                      'updated_at': nb.updated_at.isoformat() if nb.updated_at else None})
     return rows
 
 
 @app.post('/api/notebooks')
 async def create_notebook(body: NewNotebook, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
-    nb = Notebook(id=str(uuid4()), owner_id=actor.id, title=body.title, document=default_document(), version=1)
+    if body.folder_id:
+        await require_folder(db, body.folder_id, actor)
+    doc = default_document()
+    nb = Notebook(id=str(uuid4()), owner_id=actor.id, title=body.title, folder_id=body.folder_id,
+                  document=doc, document_bytes=document_size(doc), version=1)
     db.add(nb)
-    log_event(db, actor.id, 'notebook.create', nb.id)
+    log_event(db, actor.id, 'notebook.create', nb.id, body.folder_id or '')
     await db.commit()
     return await document_payload(db, nb, 'owner')
 
 
 @app.post('/api/notebooks/import')
-async def import_notebook(file: UploadFile = File(...), db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
+async def import_notebook(file: UploadFile = File(...), folder_id: str | None = Form(None),
+                          db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
     content = await file.read(settings.max_notebook_bytes + 1)
     if len(content) > settings.max_notebook_bytes:
         raise HTTPException(413, 'Notebook too large')
@@ -220,9 +300,12 @@ async def import_notebook(file: UploadFile = File(...), db: AsyncSession = Depen
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(422, 'Notebook must contain valid JSON')
     name = Path(file.filename or 'Imported').stem[:200] or 'Imported'
-    nb = Notebook(id=str(uuid4()), owner_id=actor.id, title=name, document=document, version=1)
+    if folder_id:
+        await require_folder(db, folder_id, actor)
+    nb = Notebook(id=str(uuid4()), owner_id=actor.id, title=name, folder_id=folder_id,
+                  document=document, document_bytes=document_size(document), version=1)
     db.add(nb)
-    log_event(db, actor.id, 'notebook.import', nb.id)
+    log_event(db, actor.id, 'notebook.import', nb.id, folder_id or '')
     await db.commit()
     return await document_payload(db, nb, 'owner')
 
@@ -239,7 +322,8 @@ async def save_notebook(notebook_id: str, body: SaveNotebook, db: AsyncSession =
     doc = checked_document(body.document)
     # Atomic compare-and-swap prevents silent overwrites across browser tabs.
     result = await db.execute(update(Notebook).where(Notebook.id == notebook_id, Notebook.version == body.version)
-                              .values(title=body.title, document=doc, version=body.version + 1, updated_at=utcnow()))
+                              .values(title=body.title, document=doc, document_bytes=document_size(doc),
+                                      version=body.version + 1, updated_at=utcnow()))
     if result.rowcount != 1:
         await db.rollback()
         raise HTTPException(409, 'Notebook changed in another tab; reload before saving')
@@ -258,6 +342,74 @@ async def delete_notebook(notebook_id: str, db: AsyncSession = Depends(get_db), 
     await db.commit()
     # Workspace is deliberately preserved on disk to avoid unintentional data loss.
     return {'ok': True, 'workspace_preserved': True}
+
+
+# ---------------------------------------------------------------------------
+# Folders: a flat, personal container layer on top of the notebook list.
+# They only organise *your own* notebooks; sharing stays per notebook.
+# ---------------------------------------------------------------------------
+
+@app.get('/api/folders')
+async def list_folders(db: AsyncSession = Depends(get_db), actor=Depends(current_user)):
+    return await folder_rows(db, actor)
+
+
+@app.post('/api/folders')
+async def create_folder(body: NewFolder, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
+    name = clean_folder_name(body.name)
+    clash = await db.scalar(select(Folder).where(Folder.owner_id == actor.id,
+                                                func.lower(Folder.name) == name.lower()))
+    if clash:
+        raise HTTPException(409, f'A folder named “{name}” already exists')
+    folder = Folder(id=str(uuid4()), owner_id=actor.id, name=name)
+    db.add(folder)
+    log_event(db, actor.id, 'folder.create', folder.id, name)
+    await db.commit()
+    return {'id': folder.id, 'name': folder.name, 'notebook_count': 0,
+            'updated_at': folder.updated_at.isoformat()}
+
+
+@app.patch('/api/folders/{folder_id}')
+async def rename_folder(folder_id: str, body: NewFolder, db: AsyncSession = Depends(get_db),
+                        actor=Depends(csrf_user)):
+    folder = await require_folder(db, folder_id, actor)
+    name = clean_folder_name(body.name)
+    clash = await db.scalar(select(Folder).where(Folder.owner_id == actor.id,
+                                                func.lower(Folder.name) == name.lower(),
+                                                Folder.id != folder_id))
+    if clash:
+        raise HTTPException(409, f'A folder named “{name}” already exists')
+    folder.name = name
+    log_event(db, actor.id, 'folder.rename', folder_id, name)
+    await db.commit()
+    return {'id': folder.id, 'name': folder.name}
+
+
+@app.delete('/api/folders/{folder_id}')
+async def delete_folder(folder_id: str, db: AsyncSession = Depends(get_db), actor=Depends(csrf_user)):
+    """Delete a folder; its notebooks are moved back to the root (never deleted)."""
+    folder = await require_folder(db, folder_id, actor)
+    moved = await db.execute(update(Notebook).where(Notebook.folder_id == folder_id)
+                            .values(folder_id=None))
+    await db.delete(folder)
+    log_event(db, actor.id, 'folder.delete', folder_id, f'moved={moved.rowcount}')
+    await db.commit()
+    return {'ok': True, 'notebooks_moved_to_root': int(moved.rowcount or 0)}
+
+
+@app.put('/api/notebooks/{notebook_id}/folder')
+async def move_notebook(notebook_id: str, body: MoveNotebook, db: AsyncSession = Depends(get_db),
+                        actor=Depends(csrf_user)):
+    """Move a notebook into a folder (folder_id=null moves it back to the root)."""
+    nb, role = await require_notebook(db, notebook_id, actor, 'editor')
+    if role != 'owner' and not actor.is_admin:
+        raise HTTPException(403, 'Only the notebook owner can move it between folders')
+    if body.folder_id:
+        await require_folder(db, body.folder_id, actor)
+    nb.folder_id = body.folder_id or None
+    log_event(db, actor.id, 'notebook.move', notebook_id, body.folder_id or 'root')
+    await db.commit()
+    return {'id': nb.id, 'folder_id': nb.folder_id}
 
 
 @app.get('/api/notebooks/{notebook_id}/export')
@@ -587,17 +739,27 @@ async def delete_file(notebook_id: str, filename: str, db: AsyncSession = Depend
 frontend_dist = Path(__file__).resolve().parents[2] / 'frontend' / 'dist'
 
 
-@app.get('/notebook/{notebook_id}')
-async def notebook_spa(notebook_id: str):
-    """Serve the SPA shell for /notebook/<id> deep links.
-
-    The React app reads the id from the path, authenticates normally and asks the
-    API for the document. Register this before the catch-all StaticFiles mount.
-    """
+async def spa_shell() -> FileResponse:
     index = frontend_dist / 'index.html'
     if not index.is_file():
         raise HTTPException(503, 'Frontend build not found; run npm run build')
     return FileResponse(index)
+
+
+# Deep links: the React app reads the id from the path, authenticates normally and
+# asks the API for the data. Each client-side route needs its own handler because
+# the catch-all StaticFiles mount would otherwise return 404 for unknown paths.
+# Keep these registered before the StaticFiles mount.
+@app.get('/notebook/{notebook_id}')
+async def notebook_spa(notebook_id: str):
+    """Serve the SPA shell for /notebook/<id> deep links."""
+    return await spa_shell()
+
+
+@app.get('/folder/{folder_id}')
+async def folder_spa(folder_id: str):
+    """Serve the SPA shell for /folder/<id> deep links."""
+    return await spa_shell()
 
 
 if frontend_dist.exists():

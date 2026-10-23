@@ -32,12 +32,19 @@ def verify_password(pw: str, pw_hash: str) -> bool:
 
 
 def rate_check(ip: str):
+    """Sliding-window throttle on login attempts per client IP.
+
+    Tune with LOGIN_RATE_LIMIT / LOGIN_RATE_WINDOW_SECONDS. Raise it for test
+    suites or when many users share one NAT/CI egress address.
+    """
     now = time.monotonic()
+    window = max(1.0, settings.login_rate_window_seconds)
+    limit = max(1, settings.login_rate_limit)
     bucket = _attempts[ip]
-    while bucket and now - bucket[0] > 300:
+    while bucket and now - bucket[0] > window:
         bucket.popleft()
-    if len(bucket) >= 12:
-        raise HTTPException(429, 'Too many login attempts; retry later')
+    if len(bucket) >= limit:
+        raise HTTPException(429, f'Too many login attempts; retry in {window / 60:.0f} min')
     bucket.append(now)
 
 

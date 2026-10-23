@@ -31,11 +31,29 @@ class LoginSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class Folder(Base):
+    """A flat, owner-scoped container for notebooks (one level, like the sidebar of
+    most notebook tools). Folders are personal: they are never shared directly, but
+    the notebooks inside keep their own per-notebook permissions."""
+    __tablename__ = 'folders'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    __table_args__ = (UniqueConstraint('owner_id', 'name'),)
+
+
 class Notebook(Base):
     __tablename__ = 'notebooks'
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_id: Mapped[str] = mapped_column(ForeignKey('users.id'), index=True)
     title: Mapped[str] = mapped_column(String(200))
+    # NULL = root level. Kept nullable so existing notebooks need no data migration.
+    folder_id: Mapped[str | None] = mapped_column(ForeignKey('folders.id'), nullable=True, index=True)
+    # Serialised document size, maintained on write so the dashboard can sort by
+    # size without re-serialising every notebook on each list request.
+    document_bytes: Mapped[int] = mapped_column(Integer, default=0)
     document: Mapped[dict] = mapped_column(JSON)
     version: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

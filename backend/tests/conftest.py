@@ -8,6 +8,9 @@ os.environ['DATA_DIR'] = _test_root
 os.environ['ADMIN_EMAIL'] = 'admin@test.local'
 os.environ['ADMIN_PASSWORD'] = 'integrationTestPassword123!'
 os.environ['ALLOWED_ORIGINS'] = 'http://testserver'
+# The suite logs in many times from the same fake IP; keep the production
+# throttle out of the way (it is covered separately in test_api.py).
+os.environ['LOGIN_RATE_LIMIT'] = '100000'
 
 import pytest
 # The HTTP permission and document tests do not require Docker; allow running them
